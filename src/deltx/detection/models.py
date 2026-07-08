@@ -1,10 +1,34 @@
 """Pydantic data models for the AI authorship detection pipeline."""
 
+import ast
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 from pydantic import BaseModel
+
+
+class ParsedSource(BaseModel):
+    """Structured representation of a parsed Python source file.
+
+    Produced by :class:`~deltx.detection.parser.PythonSourceParser` and consumed
+    by all three feature families (perplexity, stylometric, distribution).
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    source_code: str
+    file_path: Path
+    tokens: list[str]
+    ast_tree: ast.Module | None
+    identifiers: list[str]
+    lines_of_code: int
+    comment_lines: int
+    total_lines: int
+    indent_levels: list[int]
+    ast_node_types: list[str]
+    ast_depths: list[int]
+    is_valid: bool
 
 
 class TokenSequence(BaseModel):
