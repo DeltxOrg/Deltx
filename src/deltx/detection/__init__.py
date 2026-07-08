@@ -1,0 +1,1 @@
+"""AI authorship detection module."""
