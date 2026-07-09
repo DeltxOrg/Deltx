@@ -36,10 +36,14 @@ poetry.lock
 .env
 .env.*
 
-# Data
+# Data — ignore all downloaded/generated artifacts, keep the folder structure.
 data/raw/*
 !data/raw/.gitkeep
-data/models/*.joblib
+data/processed/*
+!data/processed/.gitkeep
+# Downloaded language model (Salesforce/codegen-350M-mono) + trained classifier.
+data/models/*
+!data/models/.gitkeep
 
 # OS
 .DS_Store
