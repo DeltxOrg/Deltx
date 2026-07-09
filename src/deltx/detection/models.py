@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel
 
 
@@ -69,7 +70,7 @@ class FeatureVector(BaseModel):
     f15_bigram_repetition_rate: float
     f16_hapax_legomena_ratio: float
 
-    def to_array(self) -> np.ndarray:
+    def to_array(self) -> npt.NDArray[np.float64]:
         """Return all 16 features as a numpy array in F1–F16 order."""
         return np.array([
             self.f1_mean_surprisal,
