@@ -71,7 +71,7 @@ Surprisal definition: `S(tᵢ) = −log₂ P(tᵢ | t₁, t₂, …, tᵢ₋₁)
 |-----|-------------------------|---------------------------------------------------------|
 | F1  | Mean Token Surprisal    | Arithmetic mean of S(tᵢ) across all tokens              |
 | F2  | Surprisal Variance      | Variance of per-token surprisal values                  |
-| F3  | Sequence Perplexity     | exp(mean(S(tᵢ))); model uncertainty measure             |
+| F3  | Sequence Perplexity     | 2 ** mean(S(tᵢ)); model uncertainty measure (bits base) |
 | F4  | Max Surprisal           | max(S(tᵢ)); peak anomaly token                         |
 | F5  | Low-Surprisal Ratio     | Fraction of tokens where S(tᵢ) < threshold             |
 | F6  | Surprisal Slope         | Linear regression slope of S(tᵢ) over token position   |
