@@ -20,6 +20,13 @@ numpy = "^1.26"
 rich = "^13.7"
 click = "^8.1"
 scipy = "^1.13"
+# DroidCollection ships as parquet; pandas needs an engine to read it.
+# Floor, not cap: pyarrow 16.x bundles DLLs that break `import torch` on Windows
+# (WinError 1114 on c10.dll) once pandas auto-imports it. 24.0 is conflict-free.
+pyarrow = ">=24.0"
+# Pulled in transitively by transformers, but dataset.py imports it directly.
+# A floor, not a cap: capping this pins transformers to an old release.
+huggingface-hub = ">=0.23"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2"
@@ -42,6 +49,10 @@ ignore = ["ANN101", "ANN102"]
 # Tests rely on `assert`; the language-model import guard is intentionally broad.
 "tests/**" = ["S101"]
 
+[tool.ruff.lint.flake8-bugbear]
+# `Path(...)` is immutable, so it is safe as a default argument value.
+extend-immutable-calls = ["pathlib.Path"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -57,6 +68,18 @@ follow_imports = "skip"
 [[tool.mypy.overrides]]
 # scipy ships no type stubs (scipy-stubs is a separate, unbundled package).
 module = ["scipy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# scikit-learn ships no type stubs.
+module = ["sklearn.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# pandas ships no py.typed marker (pandas-stubs is a separate, unbundled package).
+module = ["pandas.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
