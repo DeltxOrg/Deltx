@@ -35,6 +35,10 @@ ruff = "^0.4"
 mypy = "^1.10"
 pre-commit = "^3.7"
 
+[tool.poetry.scripts]
+# Detection CLI; equivalent to `python -m deltx.detection.cli`.
+deltx-detect = "deltx.detection.cli:cli"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 88
