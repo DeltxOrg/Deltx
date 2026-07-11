@@ -19,3 +19,7 @@ class ModelNotLoadedError(DeltxError):
 
 class DatasetError(DeltxError):
     """Dataset download or processing failure."""
+
+
+class ClassifierError(DeltxError):
+    """Classifier training, evaluation, or persistence failure."""
