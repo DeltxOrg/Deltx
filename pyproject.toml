@@ -20,6 +20,13 @@ numpy = "^1.26"
 rich = "^13.7"
 click = "^8.1"
 scipy = "^1.13"
+# DroidCollection ships as parquet; pandas needs an engine to read it.
+# Floor, not cap: pyarrow 16.x bundles DLLs that break `import torch` on Windows
+# (WinError 1114 on c10.dll) once pandas auto-imports it. 24.0 is conflict-free.
+pyarrow = ">=24.0"
+# Pulled in transitively by transformers, but dataset.py imports it directly.
+# A floor, not a cap: capping this pins transformers to an old release.
+huggingface-hub = ">=0.23"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2"
@@ -27,6 +34,10 @@ pytest-cov = "^5.0"
 ruff = "^0.4"
 mypy = "^1.10"
 pre-commit = "^3.7"
+
+[tool.poetry.scripts]
+# Detection CLI; equivalent to `python -m deltx.detection.cli`.
+deltx-detect = "deltx.detection.cli:cli"
 
 [tool.ruff]
 target-version = "py312"
@@ -41,6 +52,14 @@ ignore = ["ANN101", "ANN102"]
 [tool.ruff.lint.per-file-ignores]
 # Tests rely on `assert`; the language-model import guard is intentionally broad.
 "tests/**" = ["S101"]
+# The classifier follows scikit-learn's ML naming convention (`X` for feature
+# matrices, `y` for labels), which N803/N806 would otherwise reject as non-snake.
+"src/deltx/detection/classifier.py" = ["N803", "N806"]
+"tests/detection/test_classifier.py" = ["N803", "N806"]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Path(...)` is immutable, so it is safe as a default argument value.
+extend-immutable-calls = ["pathlib.Path"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -51,6 +70,31 @@ plugins = ["pydantic.mypy"]
 # transformers ships only partial type information; treat it as untyped so
 # strict mode does not flag every model/tokenizer call as an untyped call.
 module = ["transformers.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# scipy ships no type stubs (scipy-stubs is a separate, unbundled package).
+module = ["scipy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# scikit-learn ships no type stubs.
+module = ["sklearn.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# pandas ships no py.typed marker (pandas-stubs is a separate, unbundled package).
+module = ["pandas.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# xgboost, shap, and joblib ship no usable type information under strict mode;
+# treat them as untyped so their calls are not flagged as untyped-call errors.
+module = ["xgboost.*", "shap.*", "joblib.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 

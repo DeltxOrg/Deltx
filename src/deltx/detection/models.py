@@ -130,6 +130,9 @@ class CommitAnalysisResult(BaseModel):
 
     commit_hash: str
     timestamp: datetime
+    # Commit author, carried through from the integration contract's metadata.
+    # Optional: callers that do not track authorship simply leave it unset.
+    author: str | None = None
     ai_confidence_pct: float
     file_results: list[FileAnalysisResult]
     total_files_analyzed: int
