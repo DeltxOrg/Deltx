@@ -71,3 +71,6 @@ poetry run mypy src/
 
 - [AI Detection Module](docs/detection/README.md) — architecture, feature
   taxonomy, usage, configuration, and API reference.
+- [Training the Detector](docs/detection/training.md) — the production
+  three-phase training pipeline (build corpus → GPU feature extraction → train),
+  its scripts, and every available tuning knob.
