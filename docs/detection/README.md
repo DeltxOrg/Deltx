@@ -141,6 +141,10 @@ under `__pycache__`. Unparseable files are excluded from the commit average
 
 ### c. Training the classifier on custom data
 
+> For the full production workflow — assembling a balanced multi-source corpus,
+> GPU feature extraction, and leave-one-model-out evaluation — see
+> **[training.md](training.md)**. The snippet below is the minimal programmatic path.
+
 ```python
 import numpy as np
 
