@@ -1,0 +1,132 @@
+{
+  "total": 12,
+  "p": 1,
+  "ps": 500,
+  "paging": {
+    "pageIndex": 1,
+    "pageSize": 500,
+    "total": 12
+  },
+  "issues": [
+    {
+      "key": "AX1",
+      "rule": "python:S1192",
+      "severity": "MINOR",
+      "type": "CODE_SMELL",
+      "component": "src/utils/helpers.py",
+      "line": 15,
+      "effort": "10min",
+      "message": "Define a constant instead of duplicating this literal 3 times."
+    },
+    {
+      "key": "AX2",
+      "rule": "python:S1192",
+      "severity": "MINOR",
+      "type": "CODE_SMELL",
+      "component": "src/utils/helpers.py",
+      "line": 28,
+      "effort": "10min",
+      "message": "Define a constant instead of duplicating this literal 3 times."
+    },
+    {
+      "key": "AX3",
+      "rule": "python:S1192",
+      "severity": "MINOR",
+      "type": "CODE_SMELL",
+      "component": "src/utils/helpers.py",
+      "line": 42,
+      "effort": "10min",
+      "message": "Define a constant instead of duplicating this literal 3 times."
+    },
+    {
+      "key": "AX4",
+      "rule": "python:S1542",
+      "severity": "MAJOR",
+      "type": "CODE_SMELL",
+      "component": "src/core/router.py",
+      "line": 8,
+      "effort": "15min",
+      "message": "Rename this function to match the regular expression."
+    },
+    {
+      "key": "AX5",
+      "rule": "python:S3776",
+      "severity": "CRITICAL",
+      "type": "CODE_SMELL",
+      "component": "src/core/router.py",
+      "line": 25,
+      "effort": "30min",
+      "message": "Refactor this function to reduce its Cognitive Complexity."
+    },
+    {
+      "key": "AX6",
+      "rule": "python:S1481",
+      "severity": "MINOR",
+      "type": "CODE_SMELL",
+      "component": "src/core/router.py",
+      "line": 45,
+      "effort": "5min",
+      "message": "Remove this unused local variable."
+    },
+    {
+      "key": "AX7",
+      "rule": "python:S5542",
+      "severity": "BLOCKER",
+      "type": "VULNERABILITY",
+      "component": "src/core/auth.py",
+      "line": 12,
+      "effort": "60min",
+      "message": "Use a strong cipher algorithm."
+    },
+    {
+      "key": "AX8",
+      "rule": "python:S4790",
+      "severity": "CRITICAL",
+      "type": "SECURITY_HOTSPOT",
+      "component": "src/core/auth.py",
+      "line": 30,
+      "effort": "45min",
+      "message": "Make sure this weak hash algorithm is not used in a sensitive context."
+    },
+    {
+      "key": "AX9",
+      "rule": "python:S1854",
+      "severity": "MAJOR",
+      "type": "BUG",
+      "component": "src/core/engine.py",
+      "line": 55,
+      "effort": "20min",
+      "message": "Remove this useless assignment to local variable."
+    },
+    {
+      "key": "AX10",
+      "rule": "python:S5607",
+      "severity": "MAJOR",
+      "type": "CODE_SMELL",
+      "component": "src/core/engine.py",
+      "line": 72,
+      "effort": "15min",
+      "message": "Unreachable code after return statement."
+    },
+    {
+      "key": "AX11",
+      "rule": "python:S5765",
+      "severity": "MINOR",
+      "type": "CODE_SMELL",
+      "component": "src/utils/helpers.py",
+      "line": 60,
+      "effort": "5min",
+      "message": "Unnecessary list comprehension."
+    },
+    {
+      "key": "AX12",
+      "rule": "python:S1134",
+      "severity": "INFO",
+      "type": "CODE_SMELL",
+      "component": "src/config.py",
+      "line": 3,
+      "effort": "0min",
+      "message": "Track this FIXME comment."
+    }
+  ]
+}

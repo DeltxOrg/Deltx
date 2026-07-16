@@ -13,7 +13,7 @@ Five decoupled modules in a single repository:
 ```
 src/deltx/
 ├── common/            # Shared data models, config, utilities
-├── detection/         # Stage 2: AI Authorship Detection ← CURRENT FOCUS
+├── detection/         # Stage 2: AI Authorship Detection ✓
 │   ├── models.py      # Pydantic data models for detection
 │   ├── parser.py      # Python AST parsing + lexical tokenization
 │   ├── features/
@@ -25,7 +25,16 @@ src/deltx/
 │   ├── inference.py   # File → commit-level inference pipeline
 │   └── dataset.py     # Dataset download, filtering, preprocessing
 ├── extraction/        # Stage 1: Data Collection (future)
-├── scoring/           # Stage 3: Squale Quality Aggregation (future)
+├── scoring/           # Stage 3: Squale Quality Aggregation ✓
+│   ├── models.py      # Pydantic models: SonarIssue → CommitQualityVector
+│   ├── sonar_client.py # SonarQube Web API client + fixture mode
+│   ├── iso_mapping.py  # Rule → ISO/IEC 25010 dimension mapping
+│   ├── call_graph.py   # AST call graph + PageRank centrality + churn
+│   ├── weighting.py    # Dynamic issue weighting formula
+│   ├── scoring.py      # Penalty accumulation + Z-score normalizer
+│   ├── aggregation.py  # Squale exponential aggregation
+│   ├── pipeline.py     # score_commit() orchestrator + CLI
+│   └── tune.py         # Hyperparameter grid search (Spearman)
 ├── prediction/        # Stage 4: PatchTST Forecasting (future)
 └── interpretation/    # Stage 5: SHAP Explainability (future)
 ```
@@ -199,6 +208,86 @@ sample against the 350M-parameter LM dominates pipeline cost.
 Validation: Stratified 5-fold CV with leave-one-model-out held-out test
 (`prepare_train_test_split(holdout_model=...)`; the match is exact and
 case-insensitive, so `"llama"` never sweeps in `"codellama"`).
+
+## Quality Scoring Module — Complete Specification
+
+### Purpose
+
+Translates raw SonarQube rule violations at a given commit into four standardized ISO/IEC 25010 scores — `score_maintainability`, `score_correctness`, `score_security`, `score_efficiency` — on a 0–100 scale (100 = perfect). Uses dynamic issue weighting and Squale-inspired exponential penalty aggregation. Runs in parallel with Stage 2 (AI Detection) — no dependency on `ai_confidence_pct`.
+
+### Mathematical Specification
+
+#### Per-issue dynamic weight
+
+For issue `i` with severity `S_i`, local frequency `f_i`, centrality `C_i ∈ [0,1]`, and churn `K_i`:
+
+```
+w_i = S_i · (1 + α · ln(1 + f_i)) · (1 + β · C_i) · (1 + γ · K_i)
+```
+
+Default hyperparameters: `α=0.5, β=1.0, γ=0.3`. Tunable via `tune.py` grid search.
+
+#### Dimension penalty density
+
+```
+P_d = (Σ w_i for i ∈ dimension d) / LOC_active
+```
+
+#### Z-score normalization and inversion
+
+```
+z_d   = (P_d − μ_d) / σ_d        # μ_d, σ_d persisted from training
+score = 100 · (1 − clip(minmax(z_d), 0, 1))
+```
+
+#### Squale exponential aggregation (system-level)
+
+```
+Score_d = −100 · ln(mean(λ^(−s_m / 100))) / ln(λ)
+```
+
+Default `λ=30.0`. Dominated by the worst module: a single critical defect in a core routing module collapses the global score.
+
+### ISO/IEC 25010 Dimension Mapping
+
+| SonarQube Type      | Default Dimension | Override Rules                         |
+|---------------------|-------------------|----------------------------------------|
+| BUG                 | correctness       | —                                      |
+| VULNERABILITY       | security          | —                                      |
+| SECURITY_HOTSPOT    | security          | —                                      |
+| CODE_SMELL          | maintainability   | Efficiency/correctness rule overrides  |
+
+Severity scores: BLOCKER=10, CRITICAL=7, MAJOR=4, MINOR=2, INFO=1.
+
+### Integration Contract
+
+- **Input:** SonarQube issues + measures for a commit, source tree for call graph, Git repo for churn
+- **Output:** `CommitQualityVector` with four floats keyed as `score_maintainability`, `score_correctness`, `score_security`, `score_efficiency` — all in [0, 100]
+- **Granularity:** Per-file module scoring → Squale system-level aggregation
+- **CLI:** `deltx-score --from-fixture issues.json --src ./checkout --commit SHA`
+- **Downstream consumers:** PatchTST target channels (Stage 4), SHAP attribution (Stage 5)
+
+### 15-D Vector Field Mapping
+
+The canonical 15-D vector (`CommitDataVector` in `deltx.common.models`) carries:
+
+| Index | Field Name                | Source Module |
+|-------|---------------------------|---------------|
+| 0     | `commit_size`             | extraction    |
+| 1     | `file_count`              | extraction    |
+| 2     | `complexity_delta`        | extraction    |
+| 3     | `churn_rate`              | extraction    |
+| 4     | `ai_confidence_pct`       | detection     |
+| 5     | `score_maintainability`   | **scoring**   |
+| 6     | `score_correctness`       | **scoring**   |
+| 7     | `score_security`          | **scoring**   |
+| 8     | `score_efficiency`        | **scoring**   |
+| 9     | `author_experience`       | extraction    |
+| 10    | `time_since_last_commit`  | extraction    |
+| 11    | `test_coverage_delta`     | extraction    |
+| 12    | `dependency_count_delta`  | extraction    |
+| 13    | `documentation_ratio`     | extraction    |
+| 14    | `coupling_score`          | extraction    |
 
 ## Coding Conventions
 

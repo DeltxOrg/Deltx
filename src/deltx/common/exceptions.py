@@ -23,3 +23,15 @@ class DatasetError(DeltxError):
 
 class ClassifierError(DeltxError):
     """Classifier training, evaluation, or persistence failure."""
+
+
+class ScoringError(DeltxError):
+    """Quality scoring computation failure."""
+
+
+class SonarClientError(ScoringError):
+    """SonarQube API communication failure."""
+
+
+class NormalizerError(ScoringError):
+    """Normalizer not fitted, corrupted, or provenance mismatch."""

@@ -19,3 +19,19 @@ class DeltxConfig(BaseSettings):
     max_sequence_length: int = 1024
     confidence_threshold: float = 0.5
     random_seed: int = 42
+
+
+class ScoringConfig(BaseSettings):
+    """Configuration for the Squale quality scoring module."""
+
+    model_config = {"env_prefix": "DELTX_SCORING_", "env_file": ".env", "extra": "ignore"}
+
+    sonar_base_url: str = "http://localhost:9000"
+    sonar_token: str = ""
+    sonar_component_key: str = ""
+    normalizer_path: Path = Path("data/scoring/normalizer.json")
+    hyperparams_path: Path = Path("data/scoring/hyperparams.json")
+    churn_lookback_commits: int = 50
+    pagerank_alpha: float = 0.85
+    squale_lambda: float = 30.0
+
