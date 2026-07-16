@@ -156,7 +156,7 @@ class TestNormalizerProvenance:
 
         from deltx.common.exceptions import NormalizerError
         bad_normalizer = Normalizer()
-        with pytest.raises(NormalizerError, match="fingerprint mismatch"):
+        with pytest.raises(NormalizerError, match="Mismatch: expected"):
             bad_normalizer.load(path, expected_fingerprint="wrong_fp_12345")
 
 
