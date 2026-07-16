@@ -1,0 +1,24 @@
+{
+  "component": {
+    "key": "deltx-sample",
+    "name": "Deltx Sample Project",
+    "measures": [
+      {
+        "metric": "ncloc",
+        "value": "1250"
+      },
+      {
+        "metric": "complexity",
+        "value": "85"
+      },
+      {
+        "metric": "cognitive_complexity",
+        "value": "42"
+      },
+      {
+        "metric": "duplicated_lines_density",
+        "value": "3.5"
+      }
+    ]
+  }
+}

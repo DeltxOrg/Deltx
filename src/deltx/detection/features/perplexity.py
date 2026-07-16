@@ -198,7 +198,7 @@ class PerplexityExtractor:
 
         # Convert nats → bits: S(tᵢ) = −log₂ P = −ln P / ln 2.
         surprisal_bits = -token_log_probs / _LN2
-        return surprisal_bits.tolist()
+        return list(surprisal_bits.tolist())
 
     # -- feature reduction --------------------------------------------------
 

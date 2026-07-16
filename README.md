@@ -10,7 +10,7 @@ The **AI authorship detection module** (Stage 2) is implemented: it scores every
 |-------|--------|--------|
 | 1. Data collection | `deltx.extraction` | planned |
 | 2. AI authorship detection | `deltx.detection` | **implemented** |
-| 3. Squale quality aggregation | `deltx.scoring` | planned |
+| 3. Squale quality aggregation | `deltx.scoring` | **implemented** |
 | 4. PatchTST forecasting | `deltx.prediction` | planned |
 | 5. SHAP explainability | `deltx.interpretation` | planned |
 
@@ -59,10 +59,37 @@ result = detector.analyze_commit(files, commit_hash, timestamp)
 print(result.ai_confidence_pct)  # 0–100
 ```
 
+### Score a commit
+
+```bash
+# From a SonarQube fixture file (offline)
+poetry run deltx-score --from-fixture path/to/issues.json --src ./checkout --commit SHA
+
+# Produces JSON:
+# { "score_maintainability": 85.2, "score_correctness": 91.0, ... }
+```
+
+Or from Python:
+
+```python
+from deltx.scoring.pipeline import score_commit
+from deltx.scoring.models import Hyperparams
+
+vector = score_commit(
+    component_key="my-project",
+    source_dir=Path("./checkout"),
+    repo_path=Path("./checkout"),
+    commit="abc123",
+    issues=issues,  # list[SonarIssue]
+)
+print(vector.to_dict())  # four scores in [0, 100]
+```
+
 ### Run the tests
 
 ```bash
 poetry run pytest              # unit + integration (offline, LM mocked)
+poetry run pytest tests/scoring/ -v  # scoring module only
 poetry run ruff check src/
 poetry run mypy src/
 ```
@@ -74,3 +101,5 @@ poetry run mypy src/
 - [Training the Detector](docs/detection/training.md) — the production
   three-phase training pipeline (build corpus → GPU feature extraction → train),
   its scripts, and every available tuning knob.
+- Quality Scoring Module — see `CLAUDE.md` § Quality Scoring Module for the
+  full specification, mathematical formulas, and 15-D vector mapping.
