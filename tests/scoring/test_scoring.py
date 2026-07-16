@@ -93,7 +93,7 @@ class TestNormalizer:
     def test_fit_requires_min_2_observations(self) -> None:
         """Fit should require at least 2 observations per dimension."""
         n = Normalizer()
-        with pytest.raises(NormalizerError, match="at least 2"):
+        with pytest.raises(NormalizerError, match=">= 2 observations"):
             n.fit({
                 IsoDimension.MAINTAINABILITY: [0.1],  # Only 1!
                 IsoDimension.CORRECTNESS: [0.1, 0.2],
@@ -138,7 +138,7 @@ class TestNormalizer:
         fitted_normalizer.save(path)
 
         loaded = Normalizer()
-        with pytest.raises(NormalizerError, match="fingerprint mismatch"):
+        with pytest.raises(NormalizerError, match="Mismatch: expected"):
             loaded.load(path, expected_fingerprint="wrong_fingerprint")
 
     def test_load_missing_file_raises(self) -> None:
