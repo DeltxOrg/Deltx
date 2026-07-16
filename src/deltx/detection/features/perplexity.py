@@ -28,7 +28,7 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-import torch  # type: ignore[import-not-found]
+import torch
 
 from deltx.common.config import DeltxConfig
 from deltx.common.exceptions import ModelNotLoadedError
