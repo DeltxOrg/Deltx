@@ -114,7 +114,7 @@ def compute_centrality(graph: nx.DiGraph, alpha: float = 0.85) -> dict[str, floa
         return {node: 1.0}
 
     # NetworkX PageRank returns values that sum to 1.0.
-    raw_pr: dict[str, float] = nx.pagerank(graph, alpha=alpha)
+    raw_pr: dict[str, float] = dict(nx.pagerank(graph, alpha=alpha))
 
     # Min-max normalize to [0, 1].
     values = list(raw_pr.values())
