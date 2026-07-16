@@ -98,3 +98,18 @@ class DeltxConfig(BaseSettings):
     def chunk_overlap(self) -> int:
         """Tokens of context each chunk shares with the previous one."""
         return self.max_sequence_length - self.chunk_stride
+
+class ScoringConfig(BaseSettings):
+    """Configuration for the Squale quality scoring module."""
+
+    model_config = {"env_prefix": "DELTX_SCORING_", "env_file": ".env", "extra": "ignore"}
+
+    sonar_base_url: str = "http://localhost:9000"
+    sonar_token: str = ""
+    sonar_component_key: str = ""
+    normalizer_path: Path = Path("data/scoring/normalizer.json")
+    hyperparams_path: Path = Path("data/scoring/hyperparams.json")
+    churn_lookback_commits: int = 50
+    pagerank_alpha: float = 0.85
+    squale_lambda: float = 30.0
+

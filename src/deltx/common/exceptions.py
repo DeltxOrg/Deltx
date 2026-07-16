@@ -44,3 +44,17 @@ class GitError(ExtractionError):
     Carries the failed command and its stderr so the caller can report exactly
     which invocation broke rather than a generic non-zero exit.
     """
+class ClassifierError(DeltxError):
+    """Classifier training, evaluation, or persistence failure."""
+
+
+class ScoringError(DeltxError):
+    """Quality scoring computation failure."""
+
+
+class SonarClientError(ScoringError):
+    """SonarQube API communication failure."""
+
+
+class NormalizerError(ScoringError):
+    """Normalizer not fitted, corrupted, or provenance mismatch."""

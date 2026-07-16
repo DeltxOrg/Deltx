@@ -8,9 +8,9 @@ Each commit is encoded as a 15-dimensional vector. Index `[4]` of that vector is
 
 | Stage | Module | Status |
 |-------|--------|--------|
-| 1. Data collection | `deltx.extraction` | **in progress** |
-| 2. AI authorship detection | `deltx.detection` | **in progress** |
-| 3. Squale quality aggregation | `deltx.scoring` | planned |
+| 1. Data collection | `deltx.extraction` | planned |
+| 2. AI authorship detection | `deltx.detection` | **implemented** |
+| 3. Squale quality aggregation | `deltx.scoring` | **implemented** |
 | 4. PatchTST forecasting | `deltx.prediction` | planned |
 | 5. SHAP explainability | `deltx.interpretation` | planned |
 
@@ -62,10 +62,37 @@ print(result.ai_confidence_pct)          # 0–100, LOC-weighted across the comm
 print(result.file_results[0].distribution)  # the retained per-file distribution
 ```
 
+### Score a commit
+
+```bash
+# From a SonarQube fixture file (offline)
+poetry run deltx-score --from-fixture path/to/issues.json --src ./checkout --commit SHA
+
+# Produces JSON:
+# { "score_maintainability": 85.2, "score_correctness": 91.0, ... }
+```
+
+Or from Python:
+
+```python
+from deltx.scoring.pipeline import score_commit
+from deltx.scoring.models import Hyperparams
+
+vector = score_commit(
+    component_key="my-project",
+    source_dir=Path("./checkout"),
+    repo_path=Path("./checkout"),
+    commit="abc123",
+    issues=issues,  # list[SonarIssue]
+)
+print(vector.to_dict())  # four scores in [0, 100]
+```
+
 ### Run the tests
 
 ```bash
-poetry run pytest              # unit + integration (offline, detector mocked)
+poetry run pytest              # unit + integration (offline, LM mocked)
+poetry run pytest tests/scoring/ -v  # scoring module only
 poetry run ruff check src/
 poetry run mypy src/
 ```
