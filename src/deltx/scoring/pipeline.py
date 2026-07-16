@@ -31,16 +31,20 @@ from collections import defaultdict
 from pathlib import Path
 
 from deltx.scoring.aggregation import system_scores
-from deltx.scoring.call_graph import build_call_graph, compute_all_churn, compute_centrality
+from deltx.scoring.call_graph import (
+    build_call_graph,
+    compute_all_churn,
+    compute_centrality,
+)
 from deltx.scoring.models import (
     CommitQualityVector,
-    DimensionScore,
     Hyperparams,
     IsoDimension,
     SonarIssue,
     SonarMeasures,
+    WeightedIssue,
 )
-from deltx.scoring.scoring import Normalizer, accumulate, density, module_score
+from deltx.scoring.scoring import Normalizer, module_score
 from deltx.scoring.sonar_client import SonarClient
 from deltx.scoring.weighting import weight_all
 
@@ -108,7 +112,7 @@ def score_commit(
 
     # --- 6. Per-module (file) scoring ---
     # Group weighted issues by file.
-    issues_by_file: dict[str, list] = defaultdict(list)
+    issues_by_file: dict[str, list[WeightedIssue]] = defaultdict(list)
     for wi in weighted_issues:
         issues_by_file[wi.issue.component].append(wi)
 

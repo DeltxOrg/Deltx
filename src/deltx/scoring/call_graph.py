@@ -18,7 +18,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-import networkx as nx  # type: ignore[import-untyped]
+import networkx as nx
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ def compute_churn(
     cmd.append(file_path)
 
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd,
             cwd=str(repo_path),
             capture_output=True,

@@ -20,13 +20,12 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # ---------------------------------------------------------------------------
 # ISO/IEC 25010 dimension enum
 # ---------------------------------------------------------------------------
 
 
-class IsoDimension(str, enum.Enum):
+class IsoDimension(enum.StrEnum):
     """The four target ISO/IEC 25010 quality dimensions."""
 
     MAINTAINABILITY = "maintainability"
@@ -88,11 +87,11 @@ class Hyperparams:
     """Tunable hyperparameters for the weighting and aggregation formulas.
 
     Attributes:
-        alpha: Log-frequency sensitivity. Higher → more weight to repeated rules.
-        beta: Centrality sensitivity. Higher → more weight to topologically central files.
-        gamma: Churn sensitivity. Higher → more weight to frequently changed files.
+        alpha: Log-frequency sensitivity. Higher → weight to repeated rules.
+        beta: Centrality sensitivity. Higher → weight to topologically central files.
+        gamma: Churn sensitivity. Higher → weight to frequently changed files.
         lam: Squale exponential aggregation sensitivity (λ).
-              Higher → closer to pure minimum; lower → closer to arithmetic mean.
+              Higher → pure minimum; lower → arithmetic mean.
     """
 
     alpha: float = 0.5

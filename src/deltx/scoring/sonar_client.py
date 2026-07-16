@@ -82,7 +82,9 @@ class SonarClient:
 
             raw_issues = data.get("issues", [])
             if not isinstance(raw_issues, list):
-                logger.warning("Unexpected 'issues' type in response: %s", type(raw_issues))
+                logger.warning(
+                    "Unexpected 'issues' type in response: %s", type(raw_issues)
+                )
                 break
 
             for raw in raw_issues:
@@ -149,7 +151,9 @@ class SonarClient:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def from_fixture(issues_path: Path, measures_path: Path | None = None) -> tuple[list[SonarIssue], SonarMeasures | None]:
+    def from_fixture(
+        issues_path: Path, measures_path: Path | None = None
+    ) -> tuple[list[SonarIssue], SonarMeasures | None]:
         """Load issues (and optionally measures) from saved JSON fixtures.
 
         Args:
@@ -178,7 +182,9 @@ class SonarClient:
             with open(measures_path) as f:
                 measures_data = json.load(f)
             component = measures_data.get("component", measures_data)
-            measures_list = component.get("measures", []) if isinstance(component, dict) else []
+            measures_list = (
+                component.get("measures", []) if isinstance(component, dict) else []
+            )
             result: dict[str, Any] = {}
             for m in measures_list:
                 result[m.get("metric", "")] = m.get("value", "0")
@@ -186,7 +192,9 @@ class SonarClient:
                 ncloc=int(result.get("ncloc", 0)),
                 complexity=int(result.get("complexity", 0)),
                 cognitive_complexity=int(result.get("cognitive_complexity", 0)),
-                duplicated_lines_density=float(result.get("duplicated_lines_density", 0.0)),
+                duplicated_lines_density=float(
+                    result.get("duplicated_lines_density", 0.0)
+                ),
             )
 
         logger.info("Loaded %d issues from fixture %s", len(issues), issues_path)
@@ -209,7 +217,9 @@ class SonarClient:
     # Internal
     # ------------------------------------------------------------------
 
-    def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _get(
+        self, endpoint: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Issue a GET request with retry on 5xx errors.
 
         Returns:
@@ -257,7 +267,9 @@ class SonarClient:
                 ) from exc
 
         # Should never reach here, but satisfy the type checker.
-        raise SonarClientError(f"Unexpected retry exhaustion for {url}")  # pragma: no cover
+        raise SonarClientError(
+            f"Unexpected retry exhaustion for {url}"
+        )  # pragma: no cover
 
 
 def _parse_issue(raw: dict[str, Any]) -> SonarIssue:

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import Counter
-from typing import Callable
+from collections.abc import Callable
 
 from deltx.scoring.iso_mapping import classify
 from deltx.scoring.models import Hyperparams, SonarIssue, WeightedIssue
@@ -55,7 +55,10 @@ def weight_issue(
     """
     # Validate inputs.
     if math.isnan(severity_score) or math.isnan(centrality) or math.isnan(churn):
-        msg = f"NaN input: severity={severity_score}, centrality={centrality}, churn={churn}"
+        msg = (
+            f"NaN input: severity={severity_score}, "
+            f"centrality={centrality}, churn={churn}"
+        )
         raise ValueError(msg)
     if severity_score < 0 or centrality < 0 or churn < 0 or freq < 0:
         msg = (

@@ -14,14 +14,13 @@ from __future__ import annotations
 
 import argparse
 import itertools
-import json
 import logging
+import typing
 from dataclasses import dataclass
 from pathlib import Path
 
-from scipy.stats import spearmanr  # type: ignore[import-untyped]
+from scipy.stats import spearmanr
 
-from deltx.scoring.aggregation import squale_aggregate
 from deltx.scoring.models import Hyperparams, IsoDimension, SonarIssue
 from deltx.scoring.scoring import Normalizer, module_score
 from deltx.scoring.weighting import weight_all
@@ -109,6 +108,11 @@ def _build_labeled_fixtures() -> list[LabeledModule]:
     ]
 
 
+def _make_constant(val: float) -> typing.Callable[[str], float]:
+    def _fn(_file_path: str) -> float:
+        return val
+    return _fn
+
 def _score_modules(
     modules: list[LabeledModule],
     hp: Hyperparams,
@@ -119,8 +123,8 @@ def _score_modules(
     for mod in modules:
         weighted = weight_all(
             mod.issues,
-            centrality_fn=lambda _, c=mod.centrality: c,
-            churn_fn=lambda _, ch=mod.churn: ch,
+            centrality_fn=_make_constant(mod.centrality),
+            churn_fn=_make_constant(mod.churn),
             hp=hp,
         )
         dim_scores = module_score(weighted, mod.loc, normalizer)
@@ -144,11 +148,12 @@ def tune(
 
     # Build a normalizer fitted on a synthetic range.
     normalizer = Normalizer()
+    dist = [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
     normalizer.fit({
-        IsoDimension.MAINTAINABILITY: [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0],
-        IsoDimension.CORRECTNESS: [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0],
-        IsoDimension.SECURITY: [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0],
-        IsoDimension.EFFICIENCY: [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0],
+        IsoDimension.MAINTAINABILITY: dist,
+        IsoDimension.CORRECTNESS: dist,
+        IsoDimension.SECURITY: dist,
+        IsoDimension.EFFICIENCY: dist,
     })
 
     # Grid search space.
@@ -167,7 +172,8 @@ def tune(
 
         try:
             predicted_scores = _score_modules(modules, hp, normalizer)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to score modules: %s", exc)
             continue
 
         # Higher score = better module, so rank them.
