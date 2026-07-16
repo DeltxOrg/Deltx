@@ -28,7 +28,7 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
+import torch  # type: ignore[import-not-found]
 
 from deltx.common.config import DeltxConfig
 from deltx.common.exceptions import ModelNotLoadedError
@@ -198,7 +198,7 @@ class PerplexityExtractor:
 
         # Convert nats → bits: S(tᵢ) = −log₂ P = −ln P / ln 2.
         surprisal_bits = -token_log_probs / _LN2
-        return surprisal_bits.tolist()
+        return list(surprisal_bits.tolist())
 
     # -- feature reduction --------------------------------------------------
 

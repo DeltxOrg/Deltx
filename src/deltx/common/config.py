@@ -24,7 +24,11 @@ class DeltxConfig(BaseSettings):
 class ScoringConfig(BaseSettings):
     """Configuration for the Squale quality scoring module."""
 
-    model_config = {"env_prefix": "DELTX_SCORING_", "env_file": ".env", "extra": "ignore"}
+    model_config = {
+        "env_prefix": "DELTX_SCORING_",
+        "env_file": ".env",
+        "extra": "ignore",
+    }
 
     sonar_base_url: str = "http://localhost:9000"
     sonar_token: str = ""

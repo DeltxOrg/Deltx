@@ -105,7 +105,8 @@ class Normalizer:
             values = densities_by_dim.get(dim, [])
             if len(values) < 2:
                 raise NormalizerError(
-                    f"Dimension {dim.value} needs at least 2 observations, got {len(values)}"
+                    f"Dimension {dim.value} needs >= 2 observations, "
+                    f"got {len(values)}"
                 )
             all_values.append(sorted(values))
 
@@ -204,9 +205,9 @@ class Normalizer:
         if expected_fingerprint is not None:
             if self._stats.fingerprint != expected_fingerprint:
                 raise NormalizerError(
-                    f"Normalizer fingerprint mismatch: expected {expected_fingerprint!r}, "
-                    f"got {self._stats.fingerprint!r}. Scores computed under different "
-                    f"μ/σ cannot be mixed in the same time series."
+                    f"Mismatch: expected {expected_fingerprint!r}, "
+                    f"got {self._stats.fingerprint!r}. Scores computed under "
+                    f"different μ/σ cannot be mixed in the same time series."
                 )
 
         logger.info(

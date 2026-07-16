@@ -399,7 +399,7 @@ class DatasetManager:
             logger.info("AIGCodeSet already present at %s; skipping", destination)
             return destination
 
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download  # type: ignore[import-not-found]
 
         destination.mkdir(parents=True, exist_ok=True)
         for filename in _AIGCODESET_FILES:
