@@ -161,7 +161,7 @@ def compute_churn(
 
     try:
         result = subprocess.run(  # noqa: S603
-            cmd,
+            cmd,  # noqa: S603
             cwd=str(repo_path),
             capture_output=True,
             text=True,
