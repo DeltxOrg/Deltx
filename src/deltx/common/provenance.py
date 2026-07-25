@@ -65,6 +65,7 @@ RESULT_AFFECTING_CONFIG: Final = (
     "device",
     "low_surprisal_threshold",
     "max_sequence_length",
+    "surprisal_stride",
     "confidence_threshold",
     "random_seed",
 )

@@ -196,6 +196,70 @@ class TestComputeSurprisalTraceOffline:
         assert features["f3_sequence_perplexity"] == pytest.approx(4.0)
 
 
+class TestSlidingWindow:
+    """Full-file scoring: sequences longer than the window are windowed, not cut."""
+
+    class _FixedTokenizer:
+        """A tokenizer that always returns the same (long) id sequence."""
+
+        def __init__(self, input_ids: torch.Tensor) -> None:
+            self._input_ids = input_ids
+
+        def __call__(self, _text: str, **_kwargs: object) -> dict[str, torch.Tensor]:
+            return {"input_ids": self._input_ids}
+
+    def test_long_sequence_scores_every_token(self, config: DeltxConfig) -> None:
+        """A 10-token file under a 4-token window yields all 9 surprisals, not 3."""
+        config.max_sequence_length = 4
+        config.surprisal_stride = 2
+        extractor = PerplexityExtractor(config)
+
+        n = 10
+        # Ids must stay within the stub's vocab of 8.
+        input_ids = (torch.arange(n) % 8).unsqueeze(0)  # (1, 10)
+        extractor._tokenizer = self._FixedTokenizer(input_ids)
+        extractor._model = _StubModel()  # uniform logits over vocab 8, no .config
+
+        trace = extractor.compute_surprisal_trace("ignored")
+
+        # Every token scored exactly once → n-1 values. Under the old truncation
+        # this would have been window-1 == 3. Exact count rules out gaps and dups.
+        assert trace.token_count == n
+        assert len(trace.surprisal_values) == n - 1
+        # Uniform logits over 8 symbols ⇒ every token is log2(8) bits.
+        assert all(
+            v == pytest.approx(math.log2(8)) for v in trace.surprisal_values
+        )
+
+    def test_window_within_limit_stays_single_pass(self, config: DeltxConfig) -> None:
+        """A file at or under the window is not windowed (n-1 values, one pass)."""
+        config.max_sequence_length = 16
+        extractor = PerplexityExtractor(config)
+        input_ids = torch.arange(1, 6).unsqueeze(0)  # 5 tokens ≤ window
+        extractor._tokenizer = self._FixedTokenizer(input_ids)
+        extractor._model = _StubModel()
+
+        trace = extractor.compute_surprisal_trace("ignored")
+        assert trace.token_count == 5
+        assert len(trace.surprisal_values) == 4
+
+    def test_window_clamped_to_model_context(self, config: DeltxConfig) -> None:
+        """A window larger than the model's context is capped to the model."""
+        config.max_sequence_length = 5000
+        extractor = PerplexityExtractor(config)
+        model = _StubModel()
+        model.config = types.SimpleNamespace(n_positions=2048)  # type: ignore[attr-defined]
+        assert extractor._resolve_window(model) == 2048
+
+    def test_window_uses_config_when_model_has_no_limit(
+        self, config: DeltxConfig
+    ) -> None:
+        """Without a model context attribute, the configured window is used as-is."""
+        config.max_sequence_length = 777
+        extractor = PerplexityExtractor(config)
+        assert extractor._resolve_window(_StubModel()) == 777
+
+
 class TestModelLoadingAndFallback:
     """Lazy loading, device resolution, and CUDA-OOM fallback — via stubs."""
 

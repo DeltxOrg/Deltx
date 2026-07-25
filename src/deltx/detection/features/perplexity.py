@@ -128,10 +128,14 @@ class PerplexityExtractor:
     def compute_surprisal_trace(self, source_code: str) -> SurprisalTrace:
         """Compute per-token surprisal (in bits) for a source-code string.
 
-        The source is tokenised (truncated to ``config.max_sequence_length``) and
-        run through the model in a single forward pass. Surprisal for token *i* is
-        ``−log₂ P(tᵢ | t₁…tᵢ₋₁)``; the first token carries no left context and is
-        excluded, so a sequence of ``n`` tokens yields ``n − 1`` values.
+        The source is tokenised **without truncation**, so every token is scored.
+        A file that fits the context window (``config.max_sequence_length``, itself
+        clamped to the model's own maximum context) runs in a single forward pass;
+        a longer file is scored with a strided sliding window
+        (:meth:`_sliding_window_surprisal`) rather than being cut at the window.
+        Surprisal for token *i* is ``−log₂ P(tᵢ | t₁…tᵢ₋₁)``; the first token
+        carries no left context and is excluded, so a sequence of ``n`` tokens
+        yields ``n − 1`` values regardless of how many windows it took.
 
         Args:
             source_code: Raw Python source of a single file.
@@ -140,16 +144,12 @@ class PerplexityExtractor:
             A :class:`SurprisalTrace`. For inputs shorter than
             :data:`_MIN_TOKENS` tokens the ``surprisal_values`` list is empty.
         """
-        tokenizer, _ = self._ensure_loaded()
+        tokenizer, model = self._ensure_loaded()
 
         # CodeGen uses a GPT-2-style BPE tokenizer that does not prepend a BOS
-        # token, so every entry here is a genuine source token.
-        encoding = tokenizer(
-            source_code,
-            return_tensors="pt",
-            truncation=True,
-            max_length=self.config.max_sequence_length,
-        )
+        # token, so every entry here is a genuine source token. No truncation: the
+        # full sequence is kept and, if it exceeds the window, scored in windows.
+        encoding = tokenizer(source_code, return_tensors="pt", truncation=False)
         input_ids = encoding["input_ids"].to(self.device)
         token_count = int(input_ids.shape[1])
 
@@ -160,12 +160,81 @@ class PerplexityExtractor:
                 model_name=self.config.model_name,
             )
 
-        surprisal_values = self._surprisal_from_ids(input_ids)
+        window = self._resolve_window(model)
+        if token_count <= window:
+            surprisal_values = self._surprisal_from_ids(input_ids)
+        else:
+            surprisal_values = self._sliding_window_surprisal(input_ids, window)
         return SurprisalTrace(
             surprisal_values=surprisal_values,
             token_count=token_count,
             model_name=self.config.model_name,
         )
+
+    def _resolve_window(self, model: PreTrainedModel) -> int:
+        """The context window per forward pass: config value, clamped to the model.
+
+        Feeding more tokens than the model's positional limit raises an indexing
+        error, so ``config.max_sequence_length`` is capped at the model's own
+        maximum context (``n_positions`` / ``max_position_embeddings``) when the
+        model exposes one. Test stubs without a ``config`` fall through to the
+        configured value unchanged.
+        """
+        configured = int(self.config.max_sequence_length)
+        model_config = getattr(model, "config", None)
+        if model_config is None:
+            return configured
+        model_max = getattr(model_config, "n_positions", None) or getattr(
+            model_config, "max_position_embeddings", None
+        )
+        if model_max is not None and configured > int(model_max):
+            logger.warning(
+                "max_sequence_length %d exceeds the model's %d-token context; "
+                "clamping the window to %d",
+                configured,
+                int(model_max),
+                int(model_max),
+            )
+            return int(model_max)
+        return configured
+
+    def _sliding_window_surprisal(
+        self, input_ids: torch.Tensor, window: int
+    ) -> list[float]:
+        """Score a sequence longer than the window with a strided sliding window.
+
+        Each step feeds a ``window``-sized slice to the model but keeps surprisal
+        only for the tokens *not* already scored by a previous window, so every
+        token is scored exactly once and (past the first window) with at least
+        ``window − stride`` tokens of real left context. The per-window scores are
+        stitched into one contiguous trace covering absolute positions ``1…n−1``.
+
+        Args:
+            input_ids: Token ids, shape ``(1, n)`` with ``n > window``.
+            window: The per-forward-pass context size (already model-clamped).
+
+        Returns:
+            The full per-token surprisal list, length ``n − 1``.
+        """
+        # Keep at least one token of overlap so each window shares context with the
+        # next; a stride ≥ window would leave boundary tokens context-starved.
+        stride = max(1, min(int(self.config.surprisal_stride), window - 1))
+        seq_len = int(input_ids.shape[1])
+
+        surprisals: list[float] = []
+        prev_end = 0  # absolute index (exclusive) already covered by earlier windows
+        for begin in range(0, seq_len, stride):
+            end = min(begin + window, seq_len)
+            window_surprisal = self._surprisal_from_ids(input_ids[:, begin:end])
+            # window_surprisal[j] scores absolute target position begin + j + 1.
+            # Emit only targets at absolute positions ≥ prev_end (the new ones).
+            first_new_abs = max(prev_end, begin + 1)
+            start_idx = first_new_abs - begin - 1
+            surprisals.extend(window_surprisal[start_idx:])
+            prev_end = end
+            if end == seq_len:
+                break
+        return surprisals
 
     def _surprisal_from_ids(self, input_ids: torch.Tensor) -> list[float]:
         """Run the forward pass, falling back to CPU on CUDA out-of-memory."""

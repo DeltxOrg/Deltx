@@ -214,7 +214,8 @@ Set inline or in a `.env` file. The ones that matter for training:
 | `DELTX_CLASSIFIER_PATH` | `data/models/detector.joblib` | Where Phase C writes the shipped model (e.g. keep experiment variants side by side) |
 | `DELTX_MODEL_NAME` | `Salesforce/codegen-350M-mono` | Swap the surprisal-scoring LM (changes F1–F6; requires re-extraction) |
 | `DELTX_MODEL_CACHE_DIR` | `data/models/codegen` | LM cache location (e.g. a Kaggle working dir) |
-| `DELTX_MAX_SEQUENCE_LENGTH` | `1024` | Token truncation length for LM scoring — longer captures more of big files at higher cost |
+| `DELTX_MAX_SEQUENCE_LENGTH` | `1024` | Context window per forward pass (clamped to the LM's max context) — bigger windows give each token more context at higher memory. Files are **not** truncated to it; longer ones are scored with a strided sliding window |
+| `DELTX_SURPRISAL_STRIDE` | `512` | New tokens scored per sliding-window step; smaller = more context per late token but more forward passes. Only affects files longer than the window |
 | `DELTX_LOW_SURPRISAL_THRESHOLD` | `2.0` | Bits threshold for the F5 feature (changes extraction output) |
 | `DELTX_CONFIDENCE_THRESHOLD` | `0.5` | Decision boundary used by `predict`/`evaluate`; raise it to trade recall for precision |
 

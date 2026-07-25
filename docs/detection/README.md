@@ -221,7 +221,8 @@ e.g. `DELTX_DEVICE=cuda`):
 | `low_surprisal_threshold` | `float` | `2.0`                            | Bits threshold for the F5 low-surprisal ratio                |
 | `classifier_path`         | `Path`  | `data/models/detector.joblib`    | Where the trained XGBoost classifier is saved/loaded         |
 | `batch_size`              | `int`   | `32`                             | Batch size for model inference                               |
-| `max_sequence_length`     | `int`   | `1024`                           | Token truncation length for language-model scoring           |
+| `max_sequence_length`     | `int`   | `1024`                           | Context window per forward pass (clamped to the LM's max context). Longer files are scored with a strided sliding window, not truncated |
+| `surprisal_stride`        | `int`   | `512`                            | New tokens scored per sliding-window step; overlap (context each late token sees) is `max_sequence_length − surprisal_stride`. Only used for files longer than the window |
 | `confidence_threshold`    | `float` | `0.5`                            | Decision boundary for `DetectionClassifier.predict`          |
 | `random_seed`             | `int`   | `42`                             | Seeds sampling, CV folds, model training, SHAP subsampling   |
 

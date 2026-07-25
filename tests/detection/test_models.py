@@ -1,6 +1,5 @@
 """Tests for detection module data models."""
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np

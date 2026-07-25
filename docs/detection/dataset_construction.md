@@ -309,8 +309,10 @@ governs the per-source subsampling, the per-class balancing draw, and the final
 shuffle. Re-running `scripts/build_training_set.py` with the §3 arguments
 reproduces the 100,000-row corpus exactly.
 
-Phase B is deterministic given the same model, device and sequence length, but
-`DELTX_DEVICE` and `DELTX_MAX_SEQUENCE_LENGTH` change the extracted values —
+Phase B is deterministic given the same model, device, window and stride, but
+`DELTX_DEVICE`, `DELTX_MAX_SEQUENCE_LENGTH` and `DELTX_SURPRISAL_STRIDE` change the
+extracted values (the last two govern the sliding-window surprisal for files
+longer than the window) —
 pin them when reproducing a feature matrix. Phase C manifests record the
 matrix's `sha256`, which is the authoritative identifier for any published
 number; see [training.md](training.md#run-capture--making-results-citable).
