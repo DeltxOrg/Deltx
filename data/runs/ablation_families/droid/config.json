@@ -1,0 +1,30 @@
+{
+  "sources": [
+    "droidcollection"
+  ],
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "fixed_params": {
+    "subsample": 0.9,
+    "n_estimators": 200,
+    "min_child_weight": 1,
+    "max_depth": 10,
+    "learning_rate": 0.05,
+    "colsample_bytree": 0.8,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "tree_method": "hist",
+    "n_jobs": -1
+  },
+  "target_fpr": 0.05,
+  "families": {
+    "perplexity": 6,
+    "stylometric": 6,
+    "distribution": 4
+  }
+}
