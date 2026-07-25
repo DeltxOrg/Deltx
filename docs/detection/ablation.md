@@ -66,6 +66,15 @@ across the three corpus configurations already run:
 
 *(mean |SHAP|, `headline.shap_mean_abs` in each run's `manifest.json`.)*
 
+> **Archival note.** The pooled (`2026-07-17T13-16-24Z_gemini`) and no-CodeNet
+> (`2026-07-19T08-53-52Z_no-codenet`) runs were **removed from `data/runs/` and
+> `index.jsonl`** once the single-corpus decision was settled — their results were
+> no longer needed as live artifacts. The figures cited here and below (the F7
+> collapse, and the unseen-`gemini` recall of 0.179 → 0.547) are retained as the
+> archival record of that decision; they are no longer reproducible from an
+> on-disk manifest. The droid-only run (`2026-07-19T15-43-36Z_droid-only-*`)
+> still exists.
+
 F7's importance **collapses five-fold** the moment CodeNet leaves the pool, while
 the features that survive as top-ranked barely move. CodeNet is competitive
 programming submissions, where identifiers are `n`, `i`, `dp`. The pooled model

@@ -249,11 +249,20 @@ Extraction checkpoints every 500 rows and resumes, so long sessions are safe.
 
 ## 8. Superseded: the three-source build (22,000 rows)
 
-Retained for provenance. Every run in `data/runs/index.jsonl` predating the
-switch was trained on this corpus (`features_sha256`
+Retained for provenance. The runs predating the switch were all trained on this
+corpus (`features_sha256`
 `f0dad5e1b9630ad3d2c64e18ed3f38734c9b1186fc90a8ce638137af365ef404`), and those
 numbers are interpretable only against this construction. **Do not use it for new
 work** — §1.1 explains why.
+
+> **Removed runs.** The four pooled / no-CodeNet runs
+> (`2026-07-17T13-16-24Z_gemini`, `2026-07-19T08-53-52Z_no-codenet`,
+> `2026-07-19T09-40-53Z_no-codenet-gpt4omini`,
+> `2026-07-19T10-04-00Z_no-codenet-codestral`) were deleted from `data/runs/` and
+> pruned from `index.jsonl` once the single-corpus decision was final — their
+> results were no longer needed. The construction narrative here is their
+> remaining record. The droid-only (7,400-row) and transfer runs, which share the
+> same `features_sha256`, still exist in `index.jsonl`.
 
 **Sources and raw supply (≈ 493,990 Python samples):**
 
