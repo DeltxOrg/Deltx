@@ -1,0 +1,81 @@
+────────────────────────────────────────────────────────────────────────── Phase C — train, evaluate, and ship the detector ───────────────────────────────────────────────────────────────────────────
+Rebalanced to 45000/class (from human=48264, ai=45844)
+[14:01:21] INFO     Train split: 72000 samples — human 36000 (50.0%), AI 36000 (50.0%)                                                                                                   dataset.py:914
+           INFO       droidcollection: 72000                                                                                                                                             dataset.py:925
+           INFO     Test split: 18000 samples — human 9000 (50.0%), AI 9000 (50.0%)                                                                                                      dataset.py:914
+           INFO       droidcollection: 18000                                                                                                                                             dataset.py:925
+Split: 64800 train / 7200 val / 18000 test
+           INFO     Tuning hyperparameters: RandomizedSearchCV (n_iter=50, 5-fold, scoring='f1'); early stopping selects n_estimators                                                 classifier.py:250
+[14:11:39] INFO     Best CV f1: 0.8861 (±0.0011) with {'subsample': 0.8, 'min_child_weight': 3,  classifier.py:373
+                    'max_depth': 10, 'learning_rate': 0.01, 'colsample_bytree': 0.9}                              
+[14:11:52] INFO     Training complete in 631.34s; early stopping selected 1211 trees             classifier.py:405
+[14:11:53] INFO     Evaluation — acc=0.8837 precision=0.8832 recall=0.8843 f1=0.8837             classifier.py:527
+                    auroc=0.9543 auprc=0.9542                                                                     
+           INFO     SHAP: subsampled 18000 → 1000 rows                                           classifier.py:572
+[14:12:10] INFO     SHAP most important feature: f9_whitespace_consistency (mean|SHAP|=1.0969)   classifier.py:585
+           INFO     Leave-one-model-out: holding out 14643 'gpt-4o-mini' samples for test          dataset.py:1189
+           INFO     Train split: 60285 samples — human 36000 (59.7%), AI 24285 (40.3%)              dataset.py:914
+           INFO       droidcollection: 60285                                                        dataset.py:925
+           INFO     Test split: 29715 samples — human 9000 (30.3%), AI 20715 (69.7%)                dataset.py:914
+           INFO       droidcollection: 29715                                                        dataset.py:925
+           INFO     Tuning hyperparameters: RandomizedSearchCV (n_iter=50, 5-fold,               classifier.py:250
+                    scoring='f1'); early stopping selects n_estimators                                            
+[14:20:38] INFO     Best CV f1: 0.8375 (±0.0043) with {'subsample': 0.7, 'min_child_weight': 3, 'max_depth': 7, 'learning_rate': 0.01, 'colsample_bytree': 1.0}                       classifier.py:373
+[14:20:56] INFO     Training complete in 525.23s; early stopping selected 1478 trees                                                                                                  classifier.py:405
+           INFO     Evaluation — acc=0.8797 precision=0.9509 recall=0.8726 f1=0.9100 auroc=0.9517 auprc=0.9743                                                                        classifier.py:527
+           INFO     Tuning hyperparameters: RandomizedSearchCV (n_iter=50, 5-fold, scoring='f1'); early stopping selects n_estimators                                                 classifier.py:250
+[14:35:51] INFO     Best CV f1: 0.8865 (±0.0032) with {'subsample': 0.8, 'min_child_weight': 3, 'max_depth': 10, 'learning_rate': 0.01, 'colsample_bytree': 0.9}                      classifier.py:373
+[14:36:28] INFO     Training complete in 932.40s; early stopping selected 1303 trees                                                                                                  classifier.py:405
+[14:36:29] INFO     Saved classifier → data\models\detector.joblib                                                                                                                    classifier.py:633
+   Headline metrics   
+   (stratified 20%    
+      hold-out)       
+┏━━━━━━━━━━━┳━━━━━━━━┓
+┃ Metric    ┃  Value ┃
+┡━━━━━━━━━━━╇━━━━━━━━┩
+│ accuracy  │ 0.8837 │
+│ f1_score  │ 0.8837 │
+│ auroc     │ 0.9543 │
+│ precision │ 0.8832 │
+│ recall    │ 0.8843 │
+│ auprc     │ 0.9542 │
+└───────────┴────────┘
+╭─────────────────────────────────────────────────────────────────────────────────────── Hyperparameter search ───────────────────────────────────────────────────────────────────────────────────────╮
+│ CV f1: 0.8861 (±0.0011) over 5 folds, 50 iters                                                                                                                                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+      Confusion matrix (rows=true,      
+            cols=predicted)             
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃             ┃ pred: human ┃ pred: ai ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ true: human │        7947 │     1053 │
+│ true: ai    │        1041 │     7959 │
+└─────────────┴─────────────┴──────────┘
+         SHAP feature importance (mean |SHAP|)         
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Rank ┃ Feature                        ┃ Mean |SHAP| ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│    1 │ f9_whitespace_consistency      │      1.0969 │
+│    2 │ f2_surprisal_variance          │      0.8788 │
+│    3 │ f10_comment_to_code_ratio      │      0.8780 │
+│    4 │ f12_ast_node_type_diversity    │      0.4685 │
+│    5 │ f7_avg_identifier_length       │      0.3250 │
+│    6 │ f13_shannon_entropy            │      0.2891 │
+│    7 │ f11_ast_depth_mean             │      0.2773 │
+│    8 │ f6_surprisal_slope             │      0.1885 │
+│    9 │ f15_bigram_repetition_rate     │      0.1525 │
+│   10 │ f16_hapax_legomena_ratio       │      0.1498 │
+│   11 │ f5_low_surprisal_ratio         │      0.1333 │
+│   12 │ f1_mean_surprisal              │      0.1286 │
+│   13 │ f8_identifier_diversity        │      0.1045 │
+│   14 │ f4_max_surprisal               │      0.0861 │
+│   15 │ f14_zipf_coefficient_deviation │      0.0717 │
+│   16 │ f3_sequence_perplexity         │      0.0160 │
+└──────┴────────────────────────────────┴─────────────┘
+╭──────────────────────────────────────────────────────────────────────────────── Leave-one-model-out generalization ─────────────────────────────────────────────────────────────────────────────────╮
+│ Held-out generator: gpt-4o-mini (14643 unseen AI samples)                                                                                                                                           │
+│ Unseen-generator detection recall: 0.8867                                                                                                                                                           │
+│ Mixed LOMO test — auroc 0.9517, f1 0.9100, accuracy 0.8797                                                                                                                                          │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+Production model saved → data\models\detector.joblib
+           WARNING  Working tree is dirty (4 file(s)); capturing the diff alongside the run                                                                                           provenance.py:312
