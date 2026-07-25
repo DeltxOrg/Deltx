@@ -226,10 +226,25 @@ Set inline or in a `.env` file. The ones that matter for training:
 These are module-level constants — change them in code, not at runtime.
 
 - **Hyperparameter search** (`detection/classifier.py`): `SEARCH_SPACE` (the grid
-  sampled), `SEARCH_N_ITER` (50 candidates), `SEARCH_CV_FOLDS` (5), `SEARCH_SCORING`
-  (`"f1"`), and `EARLY_STOPPING_ROUNDS` (20). Widen the space or raise `n_iter` for
-  a more thorough search at more CPU cost; change `SEARCH_SCORING` to optimize a
-  different metric. `DEFAULT_PARAMS` is what `--no-tune` uses.
+  of *shape* params — depth, learning rate, subsample, etc.), `SEARCH_N_ITER` (50
+  candidates), `SEARCH_CV_FOLDS` (5), `SEARCH_SCORING` (`"f1"`),
+  `EARLY_STOPPING_ROUNDS` (20), and `MAX_N_ESTIMATORS` (2000). Widen the space or
+  raise `n_iter` for a more thorough search at more CPU cost; change
+  `SEARCH_SCORING` to optimize a different metric. `DEFAULT_PARAMS` is what
+  `--no-tune` uses.
+  - **The tree count is not searched.** `n_estimators` was removed from
+    `SEARCH_SPACE`: it is pinned at the `MAX_N_ESTIMATORS` ceiling and **early
+    stopping selects the real count** — inside every CV fold and on the final fit
+    — against a held-out monitor. Tuning `n_estimators` *and* early-stopping on it
+    made the two compete: when the search picked a small count (it picked 200), the
+    validation curve was still improving at that ceiling, so early stopping never
+    fired and the held-out monitor bought no regularization. With the ceiling
+    raised, early stopping is the binding constraint and reports the chosen count
+    as `headline.early_stopped_iteration` and in `best_params["n_estimators"]`. The
+    monitor is the caller's validation split when given (the headline path);
+    otherwise a stratified `INTERNAL_VAL_FRACTION` slice is carved off to pick the
+    count and then folded back — the shipped model is refit on **all** rows, none
+    withheld.
 - **DroidCollection label policy** (`detection/dataset.py`): `DROID_LABEL_MAP`
   keeps only `HUMAN_GENERATED → 0` and `MACHINE_GENERATED → 1`, dropping
   `MACHINE_REFINED` and `MACHINE_GENERATED_ADVERSARIAL` (~25% of Python rows) as

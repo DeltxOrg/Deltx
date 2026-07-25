@@ -117,6 +117,16 @@ subsample=0.9, n_estimators=200, min_child_weight=1,
 max_depth=10, learning_rate=0.05, colsample_bytree=0.8
 ```
 
+> **`n_estimators` provenance changed after this run.** Both recorded ablations
+> (`s1`, `droid50k`) predate the classifier change that removed `n_estimators`
+> from the search grid and handed the tree count to early stopping (the `200`
+> above was the grid-tuned value, and it was that ceiling — not the validation
+> curve — that stopped training). The ablation arms still fit plain XGBoost with a
+> fixed count, so a *future* ablation reads that count the same way, from
+> `headline.best_params["n_estimators"]` — only now it is the early-stopping-
+> selected count rather than a grid draw. The `s1`/`droid50k` numbers below stand:
+> they measure the code as it was when they ran.
+
 Take them from the **`headline`** block, not `shipped`. `ship()` re-runs the
 search over the full dataset, so the two can diverge — in the earlier 7,400-row
 run they did (`headline` had `max_depth=7, colsample_bytree=0.7`; `shipped` had

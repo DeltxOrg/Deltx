@@ -258,7 +258,7 @@ language model loads lazily on first use.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `train` | `(X_train, y_train, X_val=None, y_val=None, tune_hyperparameters=True) -> dict` | Optional `RandomizedSearchCV` tuning; early stopping when a validation set is given |
+| `train` | `(X_train, y_train, X_val=None, y_val=None, tune_hyperparameters=True) -> dict` | Optional `RandomizedSearchCV` tuning of shape params; early stopping selects the tree count (against `X_val` if given, else an internal slice folded back for the final refit) |
 | `predict_proba` | `(X) -> ndarray` | P(AI) per sample in `[0, 1]` |
 | `predict` | `(X) -> ndarray` | Binary labels thresholded at `config.confidence_threshold` |
 | `evaluate` | `(X_test, y_test) -> dict` | accuracy, precision, recall, f1, AUROC, AUPRC, confusion matrix, report |

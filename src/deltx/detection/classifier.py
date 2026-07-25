@@ -18,19 +18,25 @@ The project floors ``xgboost`` at 2.0, and two facts about that line shape the
 code below:
 
 * ``eval_metric`` and ``early_stopping_rounds`` are *constructor* arguments, not
-  ``fit`` arguments — 2.0 removed them from ``fit``. So early stopping is wired
-  in :meth:`DetectionClassifier._build_estimator`, only when a validation set is
-  supplied (a plain fit with ``early_stopping_rounds`` set but no ``eval_set``
-  would raise).
+  ``fit`` arguments — 2.0 removed them from ``fit``. So early stopping is wired on
+  the constructor — on the search's base estimator and on the final estimator
+  built in :meth:`DetectionClassifier._build_estimator` — whenever a monitor
+  (validation) set is available (a plain fit with ``early_stopping_rounds`` set
+  but no ``eval_set`` would raise).
 * ``use_label_encoder`` was removed entirely: XGBoost no longer encodes targets,
   so the flag the design sketch mentioned is neither needed nor accepted here.
   Passing it only provokes an "unused parameter" warning; the labels are already
   ``{0, 1}``.
 
-Hyperparameter search runs with ``refit=False`` — the CV loop finds the best
-parameters, then a single final estimator is fit on the full training data (with
-early stopping when a validation set is given). That avoids the redundant refit
-``RandomizedSearchCV`` would otherwise perform on top of the fit done here.
+Hyperparameter search runs with ``refit=False`` and early stopping active inside
+every fold: ``n_estimators`` is pinned at :data:`MAX_N_ESTIMATORS` and the number
+of trees is chosen by early stopping against a held-out monitor rather than tuned
+in the grid. Tuning the tree count *and* early-stopping on it makes the two
+compete — whenever the search picks a small count, early stopping has no room to
+act — so the count is left to early stopping alone. The search returns only the
+shape parameters; :meth:`train` reads the selected tree count off the final fit.
+Skipping the search's own refit avoids training a model the caller immediately
+replaces.
 """
 
 from __future__ import annotations
@@ -58,7 +64,11 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+from sklearn.model_selection import (
+    RandomizedSearchCV,
+    StratifiedKFold,
+    train_test_split,
+)
 
 from deltx.common.config import DeltxConfig
 from deltx.common.exceptions import ClassifierError, ModelNotLoadedError
@@ -94,15 +104,32 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "colsample_bytree": 0.8,
 }
 
-#: RandomizedSearchCV sampling space (CLAUDE.md evaluation strategy).
+#: RandomizedSearchCV sampling space (CLAUDE.md evaluation strategy). Note the
+#: absence of ``n_estimators``: the tree count is not tuned. Searching it against
+#: the same monitor early stopping consults makes the two compete — whenever the
+#: search picks a small count, early stopping cannot fire and the monitor rows buy
+#: no regularization (observed: a run stopped at ``best_iteration`` 197 against a
+#: ceiling of 200, the ceiling binding, not the validation curve). Instead the
+#: ceiling is fixed high (:data:`MAX_N_ESTIMATORS`) and early stopping selects the
+#: real count on a held-out monitor.
 SEARCH_SPACE: dict[str, list[Any]] = {
-    "n_estimators": [100, 200, 300, 500],
     "max_depth": [3, 5, 7, 10],
     "learning_rate": [0.01, 0.05, 0.1, 0.2],
     "min_child_weight": [1, 3, 5],
     "subsample": [0.7, 0.8, 0.9, 1.0],
     "colsample_bytree": [0.7, 0.8, 0.9, 1.0],
 }
+
+#: Ceiling for the boosting rounds. Never the operative count — early stopping
+#: cuts training well below this — but high enough that early stopping, not the
+#: ceiling, is what stops the fit. If a fit ever reaches it, raise it.
+MAX_N_ESTIMATORS = 2000
+
+#: Fraction of the training rows carved off as the early-stopping monitor when the
+#: caller supplies no external validation set. The monitor only chooses the tree
+#: count, after which the final model is refit on every training row (see
+#: :meth:`DetectionClassifier.train`), so these rows are not withheld from it.
+INTERNAL_VAL_FRACTION = 0.15
 
 SEARCH_N_ITER = 50
 SEARCH_CV_FOLDS = 5
@@ -153,62 +180,129 @@ class DetectionClassifier:
         When ``tune_hyperparameters`` is set, a :class:`RandomizedSearchCV` over
         :data:`SEARCH_SPACE` (``n_iter`` = :data:`SEARCH_N_ITER`, stratified
         :data:`SEARCH_CV_FOLDS`-fold, scoring :data:`SEARCH_SCORING`) selects the
-        parameters; otherwise :data:`DEFAULT_PARAMS` is used. Either way a single
-        final estimator is then fit on the full training data.
+        tree *shape* parameters; otherwise :data:`DEFAULT_PARAMS` is used.
 
-        When both ``X_val`` and ``y_val`` are given they become an early-stopping
-        eval set (patience :data:`EARLY_STOPPING_ROUNDS`); the validation set is
-        *not* fed into the CV search, which validates on its own folds.
+        The tree *count* is never tuned. ``n_estimators`` is pinned at the
+        :data:`MAX_N_ESTIMATORS` ceiling and early stopping (patience
+        :data:`EARLY_STOPPING_ROUNDS`) selects the real count on a held-out
+        monitor — both inside every CV fold and on the final fit. This keeps the
+        search and early stopping from competing for the same decision: with
+        ``n_estimators`` in the grid the search could pick a count below where the
+        validation curve plateaued, so early stopping never fired and the monitor
+        rows bought no regularization.
+
+        The monitor is ``(X_val, y_val)`` when supplied; otherwise a stratified
+        :data:`INTERNAL_VAL_FRACTION` slice is carved from the training rows. In
+        the internal case the monitor's only job is to choose the tree count, so
+        the final model is **refit on every training row** with that fixed count —
+        no rows are withheld from it. With an external monitor the fitted
+        early-stopped model is kept as-is (the caller is holding the monitor out
+        deliberately, e.g. the headline evaluation's validation split).
 
         Args:
             X_train: Training features, shape ``(n_samples, 16)``.
             y_train: Training labels in ``{0, 1}``, shape ``(n_samples,)``.
-            X_val: Optional validation features for early stopping.
-            y_val: Optional validation labels for early stopping.
+            X_val: Optional external validation features for early stopping.
+            y_val: Optional external validation labels for early stopping.
             tune_hyperparameters: Whether to run the randomized search.
 
         Returns:
-            A dict with ``best_params`` (the parameters used), ``cv_scores`` (the
-            search's best score and spread, or ``{}`` when tuning is skipped), and
+            A dict with ``best_params`` (the parameters used, with ``n_estimators``
+            set to the count early stopping selected), ``cv_scores`` (the search's
+            best score and spread, or ``{}`` when tuning is skipped), and
             ``training_time_seconds``.
         """
         features = np.asarray(X_train, dtype=np.float64)
         labels = np.asarray(y_train).astype(int)
-        has_validation = X_val is not None and y_val is not None
+        external_val = X_val is not None and y_val is not None
+        # Early stopping is used whenever we tune (carving an internal monitor if
+        # the caller gave none) or whenever an explicit validation set is handed in.
+        use_early_stopping = external_val or tune_hyperparameters
+        # An internally-carved monitor is disposable — the final model is refit on
+        # the full training set once the count is known. An external one is not
+        # ours to fold back in, so its early-stopped model is kept.
+        refit_on_full = use_early_stopping and not external_val
 
         start = time.perf_counter()
+
+        if not use_early_stopping:
+            fit_features, fit_labels = features, labels
+            es_features = es_labels = None
+        elif external_val:
+            fit_features, fit_labels = features, labels
+            es_features = np.asarray(X_val, dtype=np.float64)
+            es_labels = np.asarray(y_val).astype(int)
+        else:
+            fit_features, es_features, fit_labels, es_labels = train_test_split(
+                features,
+                labels,
+                test_size=INTERNAL_VAL_FRACTION,
+                stratify=labels,
+                random_state=self.config.random_seed,
+                shuffle=True,
+            )
+
         if tune_hyperparameters:
+            # Tuning implies early stopping, so the monitor is always set here;
+            # guard rather than assert (asserts are stripped under -O).
+            if es_features is None or es_labels is None:  # pragma: no cover
+                raise ClassifierError("Early-stopping monitor missing while tuning")
             logger.info(
                 "Tuning hyperparameters: RandomizedSearchCV "
-                "(n_iter=%d, %d-fold, scoring=%r)",
+                "(n_iter=%d, %d-fold, scoring=%r); early stopping selects n_estimators",
                 SEARCH_N_ITER,
                 SEARCH_CV_FOLDS,
                 SEARCH_SCORING,
             )
-            best_params, cv_scores = self._search_hyperparameters(features, labels)
+            best_params, cv_scores = self._search_hyperparameters(
+                fit_features, fit_labels, es_features, es_labels
+            )
         else:
             logger.info("Training with default hyperparameters (tuning disabled)")
             best_params = dict(DEFAULT_PARAMS)
             cv_scores = {}
 
+        # Ceiling for the early-stopping fit: the high cap for a tuned run (the
+        # search returns only shape params), or DEFAULT_PARAMS' own count on a
+        # --no-tune dry run.
+        ceiling = int(best_params.get("n_estimators", MAX_N_ESTIMATORS))
         self.model = self._build_estimator(
-            best_params, use_early_stopping=has_validation
+            {**best_params, "n_estimators": ceiling},
+            use_early_stopping=use_early_stopping,
         )
-        if has_validation:
-            eval_features = np.asarray(X_val, dtype=np.float64)
-            eval_labels = np.asarray(y_val).astype(int)
+        if use_early_stopping:
             self.model.fit(
-                features,
-                labels,
-                eval_set=[(eval_features, eval_labels)],
+                fit_features,
+                fit_labels,
+                eval_set=[(es_features, es_labels)],
                 verbose=False,
             )
         else:
+            self.model.fit(fit_features, fit_labels)
+
+        selected_trees: int | None = None
+        best_iteration = getattr(self.model, "best_iteration", None)
+        if use_early_stopping and best_iteration is not None:
+            selected_trees = int(best_iteration) + 1
+
+        if refit_on_full and selected_trees is not None:
+            # The monitor has served its purpose (choosing the count); refit on
+            # every training row with that fixed count so none are withheld from
+            # the shipped model. No eval_set → no early stopping on the refit.
+            self.model = self._build_estimator(
+                {**best_params, "n_estimators": selected_trees},
+                use_early_stopping=False,
+            )
             self.model.fit(features, labels)
+
+        if selected_trees is not None:
+            # Report the count early stopping chose, not the ceiling.
+            best_params = {**best_params, "n_estimators": selected_trees}
+
         self.is_fitted = True
         elapsed = time.perf_counter() - start
 
-        self._log_training_summary(best_params, elapsed, has_validation)
+        self._log_training_summary(best_params, elapsed, selected_trees)
         return {
             "best_params": best_params,
             "cv_scores": cv_scores,
@@ -216,18 +310,33 @@ class DetectionClassifier:
         }
 
     def _search_hyperparameters(
-        self, X: FloatArray, y: IntArray
+        self,
+        X: FloatArray,
+        y: IntArray,
+        X_es: FloatArray,
+        y_es: IntArray,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Run the randomized CV search and return ``(best_params, cv_scores)``.
 
+        ``n_estimators`` is not searched: the base estimator is pinned at the
+        :data:`MAX_N_ESTIMATORS` ceiling with early stopping, so every fold trains
+        against the shared held-out monitor ``(X_es, y_es)`` and stops at its own
+        best iteration. ``best_params`` therefore carries only the shape
+        parameters; the tree count is read off the final fit in :meth:`train`. The
+        monitor is disjoint from ``X`` (the fold test slices are subsets of ``X``),
+        so scoring stays honest — early stopping on the monitor cannot leak into a
+        fold's ``f1``.
+
         Uses ``refit=False``: for a single scorer the best-parameter attributes
         are still populated, and skipping the refit avoids training a model the
-        caller immediately replaces with an early-stopped one.
+        caller immediately replaces with the final fit.
         """
         base = xgb.XGBClassifier(
             random_state=self.config.random_seed,
             eval_metric="logloss",
             enable_categorical=False,
+            n_estimators=MAX_N_ESTIMATORS,
+            early_stopping_rounds=EARLY_STOPPING_ROUNDS,
         )
         folds = StratifiedKFold(
             n_splits=SEARCH_CV_FOLDS,
@@ -245,7 +354,10 @@ class DetectionClassifier:
             refit=False,
             error_score="raise",
         )
-        search.fit(X, y)
+        # eval_set is a single-element list, so sklearn's fit-param handling leaves
+        # it unindexed and hands the whole monitor to every fold — exactly the
+        # shared early-stopping set we want (verified on sklearn 1.9 / xgboost 2.1).
+        search.fit(X, y, eval_set=[(X_es, y_es)], verbose=False)
 
         best_index = int(search.best_index_)
         cv_scores: dict[str, Any] = {
@@ -286,16 +398,14 @@ class DetectionClassifier:
         return xgb.XGBClassifier(**kwargs)
 
     def _log_training_summary(
-        self, best_params: dict[str, Any], elapsed: float, has_validation: bool
+        self, best_params: dict[str, Any], elapsed: float, selected_trees: int | None
     ) -> None:
-        """Emit a one-line summary, noting the early-stopping iteration if any."""
-        model = self.model
-        best_iteration = getattr(model, "best_iteration", None)
-        if has_validation and best_iteration is not None:
+        """Emit a one-line summary, noting the early-stopping tree count if any."""
+        if selected_trees is not None:
             logger.info(
-                "Training complete in %.2fs; early-stopped at iteration %d",
+                "Training complete in %.2fs; early stopping selected %d trees",
                 elapsed,
-                best_iteration,
+                selected_trees,
             )
         else:
             logger.info("Training complete in %.2fs (params=%s)", elapsed, best_params)
