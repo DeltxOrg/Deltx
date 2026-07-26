@@ -1,0 +1,224 @@
+{
+  "run_id": "2026-07-26T10-11-25Z_droid-microsoft-phi-3-5-mini-instruct",
+  "provenance": {
+    "timestamp_utc": "2026-07-26T09:34:17.992272+00:00",
+    "duration_seconds": 2226.8112701,
+    "argv": [
+      "--features",
+      "data/processed/train_features.parquet",
+      "--per-class",
+      "45000",
+      "--holdout-model",
+      "microsoft/phi-3.5-mini-instruct",
+      "--tag",
+      "droid-microsoft/phi-3.5-mini-instruct"
+    ],
+    "python_version": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "xgboost": "2.1.4",
+      "scikit-learn": "1.9.0",
+      "shap": "0.45.1",
+      "numpy": "1.26.4",
+      "pandas": "2.3.3",
+      "pyarrow": "24.0.0"
+    },
+    "config": {
+      "model_name": "Salesforce/codegen-350M-mono",
+      "device": "auto",
+      "low_surprisal_threshold": 2.0,
+      "max_sequence_length": 1024,
+      "surprisal_stride": 512,
+      "confidence_threshold": 0.5,
+      "random_seed": 42
+    },
+    "git": {
+      "commit": "6b7611e7b0c23a41b1166886c52735f09ff85284",
+      "branch": "main",
+      "dirty": true,
+      "dirty_files": [
+        "data/runs/index.jsonl",
+        "data/runs/2026-07-26T09-30-47Z_droid-deepseek-ai-deepseek-coder-6-7b-base/"
+      ],
+      "diff_sha256": "0bf897ce68874dc7a1039f95cf6a4dc3a91cf91ea4f821f87c2e4fcd1a276c2c",
+      "diff_path": "uncommitted.diff"
+    }
+  },
+  "dataset": {
+    "features_path": "data\\processed\\train_features.parquet",
+    "sha256": "572a577d0936201bb1f40a761a1dd02657ccf2a135956c0350efec3323bee487",
+    "rows_available": 94108,
+    "rows_used": 90000,
+    "class_balance": {
+      "0": 45000,
+      "1": 45000
+    },
+    "source_counts": {
+      "droidcollection": 90000
+    },
+    "generator_counts": {
+      "gpt-4o-mini": 14643,
+      "gpt-4o": 2199,
+      "qwen/qwen2.5-coder-7b-instruct": 1914,
+      "meta-llama/llama-3.3-70b-instruct": 1820,
+      "qwen/qwen2.5-coder-1.5b-instruct": 1742,
+      "microsoft/phi-3.5-mini-instruct": 1578,
+      "codellama/codellama-70b-instruct-hf": 1443,
+      "qwen/qwen2.5-coder-32b-instruct": 1418,
+      "codellama/codellama-34b-instruct-hf": 1398,
+      "meta-llama/llama-3.1-8b-instruct": 1398,
+      "microsoft/phi-3-medium-4k-instruct": 1340,
+      "01-ai/yi-coder-1.5b-chat": 1243,
+      "01-ai/yi-coder-9b-chat": 1026,
+      "microsoft/phi-3-small-8k-instruct": 975,
+      "qwen/qwen2.5-coder-7b": 955,
+      "ibm-granite/granite-8b-code-base-4k": 954,
+      "microsoft/phi-3-mini-4k-instruct": 770,
+      "microsoft/phi-2": 750,
+      "bigcode/starcoder": 678,
+      "deepseek-ai/deepseek-coder-6.7b-base": 567,
+      "deepseek-ai/deepseek-coder-6.7b-instruct": 563,
+      "qwen/qwen2.5-coder-1.5b": 544,
+      "bigcode/starcoder2-15b": 524,
+      "meta-llama/llama-3.2-3b": 514,
+      "meta-llama/llama-3.1-8b": 487,
+      "google/codegemma-7b": 406,
+      "qwen/qwen2.5-72b-instruct": 322,
+      "meta-llama/llama-3.3-70b-instruct-turbo": 312,
+      "deepseek-ai/deepseek-coder-1.3b-instruct": 304,
+      "qwen/qwen2.5-codder-14b-instruct": 303,
+      "google/codegemma-7b-it": 294,
+      "01-ai/yi-coder-9b": 292,
+      "microsoft/phi-4": 287,
+      "ibm-granite/granite-8b-code-instruct-4k": 254,
+      "codellama/codellama-7b-hf": 168,
+      "bigcode/starcoder2-7b": 154,
+      "bigcode/starcoder2-3b": 151,
+      "deepseek-ai/deepseek-coder-1.3b-base": 135,
+      "meta-llama/llama-3.2-1b": 78,
+      "01-ai/yi-coder-1.5b": 61,
+      "google/codegemma-2b": 36
+    }
+  },
+  "headline": {
+    "split": {
+      "train": 64800,
+      "validation": 7200,
+      "test": 18000
+    },
+    "best_params": {
+      "subsample": 0.8,
+      "min_child_weight": 3,
+      "max_depth": 10,
+      "learning_rate": 0.01,
+      "colsample_bytree": 0.9,
+      "n_estimators": 1219
+    },
+    "cv_scores": {
+      "best_score": 0.8856395955645903,
+      "best_score_std": 0.0014098560030599506,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    },
+    "early_stopped_iteration": 1218,
+    "training_time_seconds": 633.6973214999998,
+    "metrics": {
+      "accuracy": 0.8825555555555555,
+      "precision": 0.881961393388063,
+      "recall": 0.8833333333333333,
+      "f1_score": 0.8826468302431443,
+      "auroc": 0.9539942654320988,
+      "auprc": 0.9539474349689654,
+      "confusion_matrix": [
+        [
+          7936,
+          1064
+        ],
+        [
+          1050,
+          7950
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n       human       0.88      0.88      0.88      9000\n          ai       0.88      0.88      0.88      9000\n\n    accuracy                           0.88     18000\n   macro avg       0.88      0.88      0.88     18000\nweighted avg       0.88      0.88      0.88     18000\n"
+    },
+    "shap_mean_abs": {
+      "f1_mean_surprisal": 0.12788392530597775,
+      "f2_surprisal_variance": 0.8669229514228646,
+      "f3_sequence_perplexity": 0.01611267806356773,
+      "f4_max_surprisal": 0.08766783823649166,
+      "f5_low_surprisal_ratio": 0.1354196498884121,
+      "f6_surprisal_slope": 0.17423785942263204,
+      "f7_avg_identifier_length": 0.32571943137992637,
+      "f8_identifier_diversity": 0.10698122001730372,
+      "f9_whitespace_consistency": 1.0979254033266626,
+      "f10_comment_to_code_ratio": 0.8789687538929284,
+      "f11_ast_depth_mean": 0.2740999130462296,
+      "f12_ast_node_type_diversity": 0.46855023765028453,
+      "f13_shannon_entropy": 0.28416825564178,
+      "f14_zipf_coefficient_deviation": 0.07404536363882654,
+      "f15_bigram_repetition_rate": 0.15613499793790106,
+      "f16_hapax_legomena_ratio": 0.1488107330193743
+    }
+  },
+  "lomo": {
+    "holdout_model": "microsoft/phi-3.5-mini-instruct",
+    "unseen_samples": 1578,
+    "unseen_recall": 0.8891001267427123,
+    "best_params": {
+      "subsample": 0.8,
+      "min_child_weight": 3,
+      "max_depth": 10,
+      "learning_rate": 0.01,
+      "colsample_bytree": 0.9,
+      "n_estimators": 1265
+    },
+    "cv_scores": {
+      "best_score": 0.8817666983375345,
+      "best_score_std": 0.003348929333524758,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    },
+    "mixed_metrics": {
+      "accuracy": 0.8888542802263406,
+      "precision": 0.9002562586240883,
+      "recall": 0.8899931793822469,
+      "f1_score": 0.8950953010926552,
+      "auroc": 0.955288669113428,
+      "auprc": 0.9590114534423229,
+      "confusion_matrix": [
+        [
+          7988,
+          1012
+        ],
+        [
+          1129,
+          9134
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n       human       0.88      0.89      0.88      9000\n          ai       0.90      0.89      0.90     10263\n\n    accuracy                           0.89     19263\n   macro avg       0.89      0.89      0.89     19263\nweighted avg       0.89      0.89      0.89     19263\n"
+    }
+  },
+  "transfer": null,
+  "shipped": {
+    "path": "data\\models\\detector.joblib",
+    "sha256": "44befc077a187a1931e87ec3c5c2f739214bdba025d600adcb583fb7e5817d30",
+    "trained_on_rows": 90000,
+    "best_params": {
+      "subsample": 0.8,
+      "min_child_weight": 3,
+      "max_depth": 10,
+      "learning_rate": 0.01,
+      "colsample_bytree": 0.9,
+      "n_estimators": 1415
+    },
+    "cv_scores": {
+      "best_score": 0.8863966679108695,
+      "best_score_std": 0.0032807527746425277,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    }
+  }
+}
