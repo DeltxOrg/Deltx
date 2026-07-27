@@ -1,0 +1,186 @@
+{
+  "run_id": "2026-07-27T08-23-13Z_aigcodeset-llama",
+  "provenance": {
+    "timestamp_utc": "2026-07-27T08:22:25.380001+00:00",
+    "duration_seconds": 47.41000369998801,
+    "argv": [
+      "--features",
+      "data/processed/train_features_aigcodeset.parquet",
+      "--per-class",
+      "45000",
+      "--holdout-model",
+      "llama",
+      "--tag",
+      "aigcodeset-llama"
+    ],
+    "python_version": "3.12.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "xgboost": "2.1.4",
+      "scikit-learn": "1.9.0",
+      "shap": "0.45.1",
+      "numpy": "1.26.4",
+      "pandas": "2.3.3",
+      "pyarrow": "24.0.0"
+    },
+    "config": {
+      "model_name": "Salesforce/codegen-350M-mono",
+      "device": "auto",
+      "low_surprisal_threshold": 2.0,
+      "max_sequence_length": 1024,
+      "surprisal_stride": 512,
+      "confidence_threshold": 0.5,
+      "random_seed": 42
+    },
+    "git": {
+      "commit": "2904bffef520e9e7efa0ca651cb058f736a0796a",
+      "branch": "main",
+      "dirty": true,
+      "dirty_files": [
+        "data/runs/index.jsonl",
+        "data/runs/2026-07-27T08-12-33Z_aigcodeset/"
+      ],
+      "diff_sha256": "f696bfd2972bf1ca0104f40ef6da22f7bf55b093f4b36b1a5a56f4eeddf27b5c",
+      "diff_path": "uncommitted.diff"
+    }
+  },
+  "dataset": {
+    "features_path": "data\\processed\\train_features_aigcodeset.parquet",
+    "sha256": "f62d5dde81474bbca64f608c401afbc62180c0a9960ada4f29a193dc54cf6948",
+    "rows_available": 4950,
+    "rows_used": 4894,
+    "class_balance": {
+      "0": 2447,
+      "1": 2447
+    },
+    "source_counts": {
+      "aigcodeset": 4894
+    },
+    "generator_counts": {
+      "gemini": 913,
+      "codestral": 894,
+      "llama": 640
+    }
+  },
+  "headline": {
+    "split": {
+      "train": 3523,
+      "validation": 392,
+      "test": 979
+    },
+    "best_params": {
+      "subsample": 0.8,
+      "min_child_weight": 3,
+      "max_depth": 3,
+      "learning_rate": 0.01,
+      "colsample_bytree": 1.0,
+      "n_estimators": 510
+    },
+    "cv_scores": {
+      "best_score": 0.604936977113664,
+      "best_score_std": 0.022375078675186504,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    },
+    "early_stopped_iteration": 509,
+    "training_time_seconds": 14.796725799998967,
+    "metrics": {
+      "accuracy": 0.6384065372829418,
+      "precision": 0.6573426573426573,
+      "recall": 0.5766871165644172,
+      "f1_score": 0.6143790849673203,
+      "auroc": 0.6905179249613956,
+      "auprc": 0.7188683732137763,
+      "confusion_matrix": [
+        [
+          343,
+          147
+        ],
+        [
+          207,
+          282
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n       human       0.62      0.70      0.66       490\n          ai       0.66      0.58      0.61       489\n\n    accuracy                           0.64       979\n   macro avg       0.64      0.64      0.64       979\nweighted avg       0.64      0.64      0.64       979\n"
+    },
+    "shap_mean_abs": {
+      "f1_mean_surprisal": 0.11995274165756395,
+      "f2_surprisal_variance": 0.14938485104042706,
+      "f3_sequence_perplexity": 0.0,
+      "f4_max_surprisal": 0.04598448425379031,
+      "f5_low_surprisal_ratio": 0.1534923314940602,
+      "f6_surprisal_slope": 0.09189185907864651,
+      "f7_avg_identifier_length": 0.2131055215900061,
+      "f8_identifier_diversity": 0.046384350357117195,
+      "f9_whitespace_consistency": 0.04671954198904106,
+      "f10_comment_to_code_ratio": 0.08908177825634271,
+      "f11_ast_depth_mean": 0.015604959467646643,
+      "f12_ast_node_type_diversity": 0.023017468130024494,
+      "f13_shannon_entropy": 0.0971736742746587,
+      "f14_zipf_coefficient_deviation": 0.06414178685538197,
+      "f15_bigram_repetition_rate": 0.08958166057474752,
+      "f16_hapax_legomena_ratio": 0.01203659731883197
+    }
+  },
+  "lomo": {
+    "holdout_model": "llama",
+    "unseen_samples": 640,
+    "unseen_recall": 0.30625,
+    "best_params": {
+      "subsample": 0.7,
+      "min_child_weight": 5,
+      "max_depth": 10,
+      "learning_rate": 0.05,
+      "colsample_bytree": 1.0,
+      "n_estimators": 35
+    },
+    "cv_scores": {
+      "best_score": 0.5422568866370318,
+      "best_score_std": 0.025845571156145147,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    },
+    "mixed_metrics": {
+      "accuracy": 0.5097250167672703,
+      "precision": 0.8169014084507042,
+      "recall": 0.34765234765234765,
+      "f1_score": 0.4877365101611773,
+      "auroc": 0.6368600786968134,
+      "auprc": 0.7971916889388702,
+      "confusion_matrix": [
+        [
+          412,
+          78
+        ],
+        [
+          653,
+          348
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n       human       0.39      0.84      0.53       490\n          ai       0.82      0.35      0.49      1001\n\n    accuracy                           0.51      1491\n   macro avg       0.60      0.59      0.51      1491\nweighted avg       0.68      0.51      0.50      1491\n"
+    }
+  },
+  "transfer": null,
+  "shipped": {
+    "path": "data\\models\\detector.joblib",
+    "sha256": "99c82eab12993d46193fe628f161793bdcdf78019c4a0b18c8ff795cb3fca1d8",
+    "trained_on_rows": 4894,
+    "best_params": {
+      "subsample": 0.7,
+      "min_child_weight": 1,
+      "max_depth": 3,
+      "learning_rate": 0.05,
+      "colsample_bytree": 1.0,
+      "n_estimators": 170
+    },
+    "cv_scores": {
+      "best_score": 0.6056691219478624,
+      "best_score_std": 0.015184774495935912,
+      "scoring": "f1",
+      "n_splits": 5,
+      "n_iter": 50
+    }
+  }
+}
