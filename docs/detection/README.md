@@ -10,7 +10,7 @@ AI-authorship score — `ai_confidence_pct ∈ [0, 100]`, where 0 means high
 confidence the code is human-written and 100 means high confidence it is
 LLM-generated. That scalar occupies index `[4]` of the 15-dimensional commit
 vector consumed by the PatchTST forecasting stage, acting as an *Evolutionary
-Driver* in the quality-decay prediction.
+Driver* in the codebase quality forecasting.
 
 Internally, each Python file touched by a commit is tokenized, scored against a
 pre-trained autoregressive code language model

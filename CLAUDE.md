@@ -15,15 +15,10 @@ src/deltx/
 ├── common/            # Shared data models, config, utilities
 ├── detection/         # Stage 2: AI Authorship Detection ← CURRENT FOCUS
 │   ├── models.py      # Pydantic data models for detection
-│   ├── parser.py      # Python AST parsing + lexical tokenization
-│   ├── features/
-│   │   ├── perplexity.py    # F1–F6: surprisal-based features
-│   │   ├── stylometric.py   # F7–F12: code style features
-│   │   └── distribution.py  # F13–F16: statistical distribution features
-│   ├── pipeline.py    # Feature extraction orchestrator
-│   ├── classifier.py  # XGBoost/RF training and prediction
+│   ├── modeling.py    # TLModel architecture + checkpoint loading
+│   ├── detector.py    # DroidDetect wrapper: source → class probabilities
 │   ├── inference.py   # File → commit-level inference pipeline
-│   └── dataset.py     # Dataset download, filtering, preprocessing
+│   └── cli.py         # Command-line interface (deltx-detect)
 ├── extraction/        # Stage 1: Data Collection (future)
 ├── scoring/           # Stage 3: Squale Quality Aggregation (future)
 ├── prediction/        # Stage 4: PatchTST Forecasting (future)
@@ -33,11 +28,10 @@ src/deltx/
 ## Technology Stack
 
 - **Python 3.12** with **Poetry** for dependency management
-- **PyTorch** + **HuggingFace Transformers** for language model inference
-- **XGBoost** as primary classifier (Random Forest as fallback)
-- **SHAP** (TreeExplainer) for feature contribution analysis
+- **PyTorch** + **HuggingFace Transformers** for detector inference (ModernBERT encoder)
+- **SHAP** for Stage 5 explainability over the 15-D commit vector
 - **Pydantic v2** for all data models and validation
-- **pandas** + **pyarrow** for dataset construction; **huggingface-hub** for downloads
+- **pandas** + **pyarrow** for tabular data; **huggingface-hub** for checkpoint downloads
 - **pytest** for testing, **ruff** for linting/formatting, **mypy** for type checking
 - **GitHub Actions** for CI/CD
 
@@ -46,159 +40,166 @@ src/deltx/
 > auto-imports pyarrow when installed, `import pandas` alone is enough to trigger it.
 > Likewise `huggingface-hub` is floored, not capped: capping it pins `transformers`
 > to an old release.
+>
+> **transformers must be ≥ 4.48**, the first release with ModernBERT support.
 
 ## AI Detection Module — Complete Specification
 
 ### Purpose
 
-Addresses the "Invisibility Gap": assigns each commit a probabilistic AI-authorship score (ai_confidence_pct) quantifying the likelihood that code was LLM-generated. This score occupies index [4] of the 15-dimensional data vector as an Evolutionary Driver.
+Addresses the "Invisibility Gap": assigns each commit a probabilistic AI-authorship
+score (`ai_confidence_pct`) quantifying the likelihood that its code was
+LLM-generated. This score occupies index `[4]` of the 15-dimensional data vector as
+an Evolutionary Driver.
 
-### Internal Pipeline (6 stages)
+Detection is performed by **DroidDetect-Base**, a published pre-trained
+AI-generated-code detector, used directly as the Stage 2 detector. Deltx neither
+trains nor re-evaluates a detector: the model is already trained, benchmarked, and
+peer-reviewed by its authors, and Deltx consumes it as a fixed component. All
+engineering effort goes into the wrapper — loading the checkpoint correctly, reading
+its outputs correctly, and aggregating file-level predictions to the commit level.
+
+### Detection Model
+
+**Model:** `project-droid/DroidDetect-Base` (HuggingFace), Apache-2.0.
+**Paper:** Orel, Paul et al., *Droid: A Resource Suite for AI-Generated Code
+Detection*, EMNLP 2025 Main ([arXiv:2507.10583](https://arxiv.org/abs/2507.10583)).
+
+| Property           | Value                                                          |
+|--------------------|----------------------------------------------------------------|
+| Backbone           | `answerdotai/ModernBERT-base` (encoder-only, 149M params)       |
+| Head               | mean-pool → `Linear(768 → 128)` → ReLU → `Linear(128 → 4)`      |
+| Task               | 4-class classification                                          |
+| Context window     | 8,192 tokens (ModernBERT native) — most source files fit whole   |
+| Training corpus    | Filtered `project-droid/DroidCollection` (7 languages incl. Python) |
+| Training objective | `CrossEntropyLoss + 0.1 × BatchHardSoftMarginTripletLoss`        |
+
+A `-Large` variant exists (ModernBERT-large, 396M). Base is the default: the
+reported weighted-F1 gap is well under a point (see below) while Base is ~2.7×
+smaller, and Stage 2 runs over every commit in a repository's history.
+
+**In-domain weighted F1, as reported in the paper.** These are the authors'
+published numbers and are the basis on which Deltx adopts the model; Deltx does not
+reproduce them.
+
+| Variant           | 2-class | 3-class | 4-class |
+|-------------------|---------|---------|---------|
+| DroidDetect-Base  | 99.18   | 94.36   | 92.95   |
+| DroidDetect-Large | 99.25   | 95.17   | 94.30   |
+
+The 2-class column is the operating point Deltx actually uses — see *Deriving
+ai_confidence_pct* below.
+
+### Checkpoint Loading Contract
+
+The HF repo ships exactly: `config.json`, `pytorch_model.bin`,
+`tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`.
+There is **no modeling module and no `auto_map`**, and `config.json` is minimal:
+
+```json
+{"model_type": "custom_model", "architectures": ["Model"],
+ "projection_dim": 128, "num_classes": 4}
+```
+
+Consequences, all load-bearing:
+
+1. **`AutoModelForSequenceClassification.from_pretrained` cannot load this
+   checkpoint.** `modeling.py` must define the `TLModel` architecture locally
+   (mirroring the model card verbatim), instantiate `ModernBERT-base` as the
+   `text_encoder`, then load `pytorch_model.bin` into it with `torch.load`.
+2. **The tokenizer loads normally** via `AutoTokenizer.from_pretrained` — the
+   ModernBERT tokenizer files are present and complete.
+3. **Filter `additional_loss.*` keys when loading the state dict.** The training
+   `TLModel.__init__` wraps the encoder in a `sentence-transformers`
+   `BatchHardSoftMarginTripletLoss`, so the checkpoint may carry a duplicate copy
+   of the encoder weights under that prefix. Inference omits the loss module
+   entirely; load with explicit key filtering and assert that no *expected* key is
+   missing, rather than passing a blanket `strict=False` that would silently
+   tolerate an unloaded classifier head.
+4. **Do not add `sentence-transformers` as a runtime dependency.** It is needed
+   only to construct the training-time loss.
+
+> **Padding contaminates the pooled embedding.** The model card's `forward` pools
+> with `last_hidden_state.mean(dim=1)` — an unmasked mean over *every* position,
+> including padding. A file's prediction therefore depends on what else is in its
+> batch. Reproducing training-time behaviour means reproducing this pooling as
+> written; do **not** "fix" it to a mask-aware mean, which would change the
+> operating point the reported metrics describe. Instead avoid the ambiguity at
+> inference: tokenize without padding and score one file per forward pass, or
+> bucket files by token length. Any batching strategy must be verified to produce
+> predictions identical to single-sample scoring before it is used.
+
+### Label Semantics
+
+The four classes are DroidCollection's `Label` values:
+
+| Index | Label                           | Meaning                                        |
+|-------|---------------------------------|------------------------------------------------|
+| 0     | `HUMAN_GENERATED`               | Human-authored                                  |
+| 1     | `MACHINE_GENERATED`             | LLM-authored                                    |
+| 2     | `MACHINE_REFINED`               | Human code an LLM rewrote — mixed authorship    |
+| 3     | `MACHINE_GENERATED_ADVERSARIAL` | LLM output prompted to read as human            |
+
+> **The index→label mapping is asserted by the model card, not by the artifact.**
+> `config.json` carries no `id2label`, so nothing in the checkpoint pins class order.
+> Read the order wrong and `ai_confidence_pct` inverts silently — a fully confident
+> human file would score 100. Confirm the order once with a smoke test over a
+> handful of unmistakable samples (a few hand-written files, a few freshly
+> LLM-generated ones) and assert it in the test suite. This is a correctness check
+> on our own output handling, not a re-evaluation of the model.
+
+### Deriving `ai_confidence_pct`
+
+```
+ai_confidence_pct = 100 × (1 − P(HUMAN_GENERATED))
+```
+
+Rationale: Deltx needs a scalar for *degree of AI involvement*, and all three
+machine classes represent AI involvement. Collapsing them to their complement of
+class 0 turns the noisy 4-way decision (92.95 F1) into the reliable
+human-vs-machine decision (99.18 F1) without discarding the adversarial and
+refined classes — a `MACHINE_GENERATED` sample misread as `MACHINE_REFINED` still
+scores high, because the confusion is *inside* the collapsed group.
+
+Retain the full 4-way probability distribution on every result object. Stages 3–5
+may want the finer signal (e.g. `MACHINE_REFINED` is a plausible quality-decay
+predictor in its own right), and discarding it here would be irreversible.
+
+### Internal Pipeline (5 stages)
 
 1. Receive raw Python source files for a commit
-2. Tokenize using Python `ast` module + lexical tokenizer → AST + flat token sequence
-3. Score tokens against pre-trained code LM → per-token log-probabilities → surprisal values
-4. Extract 16 features across three families → fixed-length feature vector
-5. Classify via XGBoost/RF trained on labelled human-vs-AI samples → probability
-6. Output calibrated ai_confidence_pct, aggregated file→commit via LOC-weighted averaging
+2. Tokenize with the ModernBERT tokenizer; files over 8,192 tokens are split into
+   overlapping chunks, and their chunk probabilities are combined by token-count
+   weighting (the same weighting logic as the file→commit step)
+3. Single forward pass per file (or per chunk) → 4-class logits → softmax
+4. Collapse to `P(AI) = 1 − P(HUMAN_GENERATED)`
+5. Aggregate file → commit by LOC-weighted average → `ai_confidence_pct ∈ [0, 100]`
 
-### Pre-trained Language Model
-
-**Model:** `Salesforce/codegen-350M-mono` (autoregressive, Python-specific, 350M params)
-**Purpose:** Compute token-level log-probabilities for surprisal features F1–F6.
-**Rationale:** Autoregressive architecture produces true left-to-right conditional probabilities matching the surprisal formula. Python-specific training improves sensitivity to code-specific patterns. 350M parameters balances quality against batch processing throughput.
-
-### Feature Taxonomy (16 features)
-
-#### Family A — Perplexity & Surprisal (F1–F6)
-
-Surprisal definition: `S(tᵢ) = −log₂ P(tᵢ | t₁, t₂, …, tᵢ₋₁)`
-
-| ID  | Name                    | Definition                                              |
-|-----|-------------------------|---------------------------------------------------------|
-| F1  | Mean Token Surprisal    | Arithmetic mean of S(tᵢ) across all tokens              |
-| F2  | Surprisal Variance      | Variance of per-token surprisal values                  |
-| F3  | Sequence Perplexity     | 2 ** mean(S(tᵢ)); model uncertainty measure (bits base) |
-| F4  | Max Surprisal           | max(S(tᵢ)); peak anomaly token                         |
-| F5  | Low-Surprisal Ratio     | Fraction of tokens where S(tᵢ) < threshold             |
-| F6  | Surprisal Slope         | Linear regression slope of S(tᵢ) over token position   |
-
-#### Family B — Stylometric (F7–F12)
-
-| ID  | Name                    | Definition                                              |
-|-----|-------------------------|---------------------------------------------------------|
-| F7  | Avg Identifier Length   | Mean character length of variable/function/class names  |
-| F8  | Identifier Diversity    | Unique identifiers / total identifier count             |
-| F9  | Whitespace Consistency  | Std deviation of indentation levels across lines        |
-| F10 | Comment-to-Code Ratio   | Comment lines / lines of code (LOC excludes comments)    |
-| F11 | AST Depth (Mean)        | Average nesting depth of AST nodes                      |
-| F12 | AST Node-Type Diversity | Shannon entropy of AST node type frequency distribution |
-
-#### Family C — Distribution (F13–F16)
-
-| ID  | Name                    | Definition                                              |
-|-----|-------------------------|---------------------------------------------------------|
-| F13 | Shannon Entropy         | H = −∑ p(t) log₂ p(t) over token distribution          |
-| F14 | Zipf Coefficient Dev.   | Deviation from expected Zipf exponent in frequency-rank |
-| F15 | Bigram Repetition Rate  | Fraction of token bigrams that appear more than once    |
-| F16 | Hapax Legomena Ratio    | Fraction of tokens appearing exactly once               |
+The score is the model's raw softmax mass, not a calibrated probability — a
+cross-entropy + triplet objective gives no calibration guarantee. It is a monotone
+confidence signal, which is what Stage 4 needs from an input channel; treat it as
+ordinal rather than as a literal percentage likelihood.
 
 ### Integration Contract
 
-- **Input:** Raw Python source code of every file modified in a commit, plus metadata (commit hash, timestamp, author)
-- **Output:** `ai_confidence_pct ∈ [0, 100]` where 0 = high confidence human, 100 = high confidence AI
+- **Input:** Raw Python source of every file modified in a commit, plus metadata
+  (commit hash, timestamp, author)
+- **Output:** `ai_confidence_pct ∈ [0, 100]` where 0 = high confidence human,
+  100 = high confidence AI; plus the retained 4-way distribution
 - **Granularity:** File-level classification → commit-level LOC-weighted average
-- **Processing:** Offline batch. Target throughput: 50–100 commits/minute including overhead
-- **Downstream consumers:** PatchTST input channel (Stage 4), SHAP feature attribution (Stage 5)
+- **Skipped files:** non-`.py`, `setup.py`, `conftest.py`, anything under
+  `__pycache__`. Unparseable or empty files are excluded from the commit average
+  ("assume human when in doubt"); a commit with nothing classifiable scores 0.0
+- **Processing:** Offline batch. Target throughput ≥ 50–100 commits/minute
+  including overhead. One encoder forward pass per file should clear this
+  comfortably — but measure before quoting a figure
+- **Downstream consumers:** PatchTST input channel (Stage 4), SHAP feature
+  attribution (Stage 5)
 
-### Training Data Sources
-
-Implemented in `detection/dataset.py`. Every origin below was verified against the
-live publisher; the counts are what actually ships.
-
-| Source key        | Origin                                    | Python samples          | Role                      |
-|-------------------|-------------------------------------------|-------------------------|---------------------------|
-| `droidcollection` | HF `project-droid/DroidCollection`        | ~262k (train split)     | Primary (Python-filtered) |
-| `aigcodeset`      | HF `basakdemirok/AIGCodeSet`              | 4,755 human + 2,828 AI  | Supplementary             |
-| `codenet`         | IBM Project CodeNet, `Python800` subset   | 240,000 (human only)    | Human ground truth        |
-| `gptsniffer`      | GitHub `MDEGroup/GPTSniffer`              | **none** — Java only    | Unusable, see below       |
-
-**DroidCollection** (`project-droid/DroidCollection`, EMNLP 2025). Parquet shards
-under `data/`, ~1.06M rows across train/dev/test and **9 languages**.
-Columns: `Code`, `Label`, `Language`, `Generator`, `Model_Family`,
-`Generation_Mode`, `Source`, and two parameter blobs. The `Generator` column holds
-45 distinct model names plus the literal `Human`.
-
-Its `Label` column is **four-class, not binary**:
-
-| Label                           | Maps to    | Rationale                                              |
-|---------------------------------|------------|--------------------------------------------------------|
-| `HUMAN_GENERATED`               | `label=0`  |                                                        |
-| `MACHINE_GENERATED`             | `label=1`  |                                                        |
-| `MACHINE_REFINED`               | *dropped*  | Human code an LLM rewrote — mixed authorship           |
-| `MACHINE_GENERATED_ADVERSARIAL` | *dropped*  | AI output styled to read as human; would poison class 0 |
-
-`DatasetManager.DROID_LABEL_MAP` encodes this policy; override the class attribute
-to change it. The two dropped classes are ~25% of Python rows (measured on the dev
-split: 24,641 of 32,761 kept).
-
-**AIGCodeSet** (`basakdemirok/AIGCodeSet`). The GitHub repository referenced in
-earlier drafts of this document does not exist; the HuggingFace mirror is
-authoritative. Two CSVs are read (`data/human_selected_dataset.csv`,
-`data/created_dataset_with_llms.csv`); a third combined CSV carrying ada embeddings
-is 265 MB and deliberately skipped. AI half generated by CodeLlama 34B, Codestral
-22B and Gemini 1.5 Flash (`ai_model` ∈ `llama`, `codestral`, `gemini`).
-
-Its human half is drawn from CodeNet, and the overlap is measurable: **451 of its
-4,755 human rows (9.5%) are byte-identical to `Python800` submissions**. Dedup is
-therefore load-bearing whenever both sources are enabled.
-
-> **Label-conflicting duplicates.** AIGCodeSet contains **103 code strings that
-> carry both `label=0` and `label=1`** — the LLM reproduced a human solution
-> verbatim, so the same bytes appear in both CSVs. These are contradictions, not
-> duplicates. `_drop_label_conflicts()` removes *every* copy of such a string
-> (206 rows) before deduplication runs.
->
-> Resolving them by keeping one copy would let file-read order assign ground
-> truth: the AI copy would win purely because `created_dataset_with_llms.csv`
-> sorts before `human_selected_dataset.csv`. Both copies go instead — a string
-> that demonstrably belongs to both classes teaches the classifier nothing.
->
-> After conflict removal, dedup drops a further 27 genuinely benign duplicates
-> (5 within the human half, 22 within the AI half). Loading AIGCodeSet alone
-> therefore yields 7,337 rows: 4,636 human and 2,701 AI.
-
-**IBM CodeNet.** The full archive is 7.8 GB across 55 languages and ~14M
-submissions. Deltx downloads only the `Project_CodeNet_Python800` benchmark
-subset: a 30 MB tarball of 240,000 Python files across 800 problems, all
-human-written (`label=0`).
-
-**GPTSniffer** (Nguyen et al., JSS 2024). Its replication package contains 28,174
-Java files and 26 Python files, and all 26 are the tool's own source code rather
-than samples. It therefore contributes **zero** Python training samples. Since
-Deltx is Python-only, `download_gptsniffer()` fetches nothing and instead writes
-placement instructions for a `human/` + `ai/` directory layout that
-`load_from_directory("gptsniffer")` will read if data is supplied by hand.
-
-**Unified schema** produced by `load_and_unify()`: `source_code`, `label` (0=human,
-1=AI), `source_dataset`, `ai_model` (`None` for human rows), `language`. Filters run
-in this order, and the order matters:
-
-1. Python only
-2. Minimum 10 tokens
-3. Drop *all* copies of any `source_code` carrying more than one `label`
-4. Drop exact-duplicate `source_code` (first source listed wins a collision)
-
-Step 3 must precede step 4, or deduplication collapses the disagreeing rows and
-hides the conflict. Because it runs first, every collision surviving into step 4
-agrees on its label, so load order cannot change any sample's ground truth.
-
-Target training set: 10,000–20,000 paired samples (5,000–10,000 per class); use
-`load_and_unify(max_per_source=...)` to cap the large corpora, since scoring every
-sample against the 350M-parameter LM dominates pipeline cost.
-Validation: Stratified 5-fold CV with leave-one-model-out held-out test
-(`prepare_train_test_split(holdout_model=...)`; the match is exact and
-case-insensitive, so `"llama"` never sweeps in `"codellama"`).
+> **Detection has no module-local SHAP.** Explainability lives entirely in Stage 5,
+> where SHAP attributes over the 15-D commit vector and `ai_confidence_pct` is one
+> input feature. TreeExplainer does not apply to a transformer, and Stage 2's job is
+> to emit one well-defined scalar, not to explain itself.
 
 ## Coding Conventions
 
@@ -212,6 +213,8 @@ case-insensitive, so `"llama"` never sweeps in `"codellama"`).
 - **Constants** in UPPER_SNAKE_CASE; define in `common/constants.py`
 - **No hardcoded model paths or thresholds** — all configurable via `common/config.py`
 - **Imports:** standard library → third-party → local, enforced by ruff's isort rules
+- **Tests never download the checkpoint.** Mock the detector; mark anything that
+  needs real weights `@pytest.mark.slow`.
 
 ## Key Terminology
 
@@ -219,3 +222,4 @@ case-insensitive, so `"llama"` never sweeps in `"codellama"`).
 - **15-D Vector:** The 15-dimensional feature vector per commit that feeds PatchTST
 - **Squale:** The quality model framework adapted for ISO/IEC 25010 scoring
 - **ai_confidence_pct:** The scalar output of the detection module (index [4] of the 15-D vector)
+- **DroidDetect:** The pre-trained encoder-only detector Deltx wraps for Stage 2
