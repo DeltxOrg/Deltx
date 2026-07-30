@@ -68,7 +68,7 @@ Detection*, EMNLP 2025 Main ([arXiv:2507.10583](https://arxiv.org/abs/2507.10583
 | Property           | Value                                                          |
 |--------------------|----------------------------------------------------------------|
 | Backbone           | `answerdotai/ModernBERT-base` (encoder-only, 149M params)       |
-| Head               | mean-pool → `Linear(768 → 128)` → ReLU → `Linear(128 → 4)`      |
+| Head               | mean-pool → `Linear(768 → 256)` → ReLU → `Linear(256 → 4)`      |
 | Task               | 4-class classification                                          |
 | Context window     | 8,192 tokens (ModernBERT native) — most source files fit whole   |
 | Training corpus    | Filtered `project-droid/DroidCollection` (7 languages incl. Python) |
@@ -101,23 +101,37 @@ There is **no modeling module and no `auto_map`**, and `config.json` is minimal:
  "projection_dim": 128, "num_classes": 4}
 ```
 
+> **`projection_dim` in `config.json` is wrong.** It says `128`, and so does the
+> model card's `TLModel.__init__` default, but the shipped weights are
+> `text_projection.weight (256, 768)` and `classifier.weight (4, 256)`. The real
+> head is **768 → 256 → 4**. Build to the weights, not to the config; instantiating
+> at 128 fails with a shape mismatch. Verified by inspecting `pytorch_model.bin`
+> directly — do not trust either published value.
+
+The checkpoint's actual contents, measured rather than assumed: **138 tensors under
+exactly three prefixes** — `text_encoder.*` (134), `text_projection.*` (2),
+`classifier.*` (2).
+
 Consequences, all load-bearing:
 
 1. **`AutoModelForSequenceClassification.from_pretrained` cannot load this
-   checkpoint.** `modeling.py` must define the `TLModel` architecture locally
-   (mirroring the model card verbatim), instantiate `ModernBERT-base` as the
-   `text_encoder`, then load `pytorch_model.bin` into it with `torch.load`.
-2. **The tokenizer loads normally** via `AutoTokenizer.from_pretrained` — the
-   ModernBERT tokenizer files are present and complete.
-3. **Filter `additional_loss.*` keys when loading the state dict.** The training
-   `TLModel.__init__` wraps the encoder in a `sentence-transformers`
-   `BatchHardSoftMarginTripletLoss`, so the checkpoint may carry a duplicate copy
-   of the encoder weights under that prefix. Inference omits the loss module
-   entirely; load with explicit key filtering and assert that no *expected* key is
-   missing, rather than passing a blanket `strict=False` that would silently
-   tolerate an unloaded classifier head.
+   checkpoint.** `modeling.py` must define the `TLModel` architecture locally,
+   instantiate `ModernBERT-base` as the `text_encoder`, then load
+   `pytorch_model.bin` into it with `torch.load`.
+2. **The encoder keys match upstream `answerdotai/ModernBERT-base` exactly** —
+   134 tensors, zero missing, zero unexpected. So `AutoModel.from_config` on the
+   upstream config gives a container the checkpoint drops straight into.
+3. **`additional_loss.*` keys do not ship.** The training-time
+   `BatchHardSoftMarginTripletLoss` wrapper left nothing in the checkpoint, so no
+   key filtering is needed. Load with **`strict=True`** — it is the stronger
+   guarantee, and it will catch any future checkpoint revision that changes shape
+   instead of silently tolerating an unloaded classifier head.
 4. **Do not add `sentence-transformers` as a runtime dependency.** It is needed
-   only to construct the training-time loss.
+   only to construct the training-time loss, which inference omits entirely.
+5. **The tokenizer loads normally** via `AutoTokenizer.from_pretrained`:
+   `PreTrainedTokenizerFast`, vocab 50,280, `model_max_length` 8192, `[PAD]` /
+   `[CLS]` / `[SEP]` all present. It wraps input in `[CLS]`/`[SEP]`, and those
+   positions enter the mean pool — which is what training did, so keep it.
 
 > **Padding contaminates the pooled embedding.** The model card's `forward` pools
 > with `last_hidden_state.mean(dim=1)` — an unmasked mean over *every* position,
@@ -140,13 +154,34 @@ The four classes are DroidCollection's `Label` values:
 | 2     | `MACHINE_REFINED`               | Human code an LLM rewrote — mixed authorship    |
 | 3     | `MACHINE_GENERATED_ADVERSARIAL` | LLM output prompted to read as human            |
 
-> **The index→label mapping is asserted by the model card, not by the artifact.**
-> `config.json` carries no `id2label`, so nothing in the checkpoint pins class order.
-> Read the order wrong and `ai_confidence_pct` inverts silently — a fully confident
-> human file would score 100. Confirm the order once with a smoke test over a
-> handful of unmistakable samples (a few hand-written files, a few freshly
-> LLM-generated ones) and assert it in the test suite. This is a correctness check
-> on our own output handling, not a re-evaluation of the model.
+**This order is verified, not assumed.** `config.json` carries no `id2label`, so
+nothing in the artifact pins it — and since the same file misreports
+`projection_dim`, the card alone was not trustworthy. Scoring 120 balanced
+Python rows from the DroidCollection *test* split produced a clean diagonal:
+100% of `HUMAN_GENERATED` → index 0, 97% of `MACHINE_GENERATED` → 1, 83% of
+`MACHINE_REFINED` → 2, 93% of `MACHINE_GENERATED_ADVERSARIAL` → 3, for 93.3%
+4-class accuracy against the paper's reported 92.95. Mean and `[CLS]` pooling
+scored identically, confirming the documented mean pool. The order is asserted in
+the test suite; read it wrong and `ai_confidence_pct` inverts silently.
+
+> **Feed complete, top-level files — never indented fragments.** This is the
+> sharpest practical constraint on the module. Complete stdlib modules
+> (`textwrap.py`, `difflib.py`, `argparse.py`, …) score a median P(AI) of **0.026**,
+> 13/15 correctly human. The *same code* extracted as individual methods via
+> `inspect.getsource` — i.e. 4-space-indented fragments torn out of class context —
+> scores P(AI) ≈ **0.999**. Leading indentation and mid-scope truncation are
+> out-of-distribution and drive confident false positives.
+>
+> Two consequences. First, this is independent support for whole-file scoring over
+> diff hunks: hunks are exactly the indented fragments that fail. Second, chunking
+> files past the context window is **not** a free operation — a naive token window
+> starts chunk 2 at arbitrary indentation and manufactures the failure case. Split
+> on top-level boundaries where possible, and treat any chunk that isn't
+> top-level-aligned as suspect.
+>
+> Residual false positives on ordinary human code remain: `csv.py` scored 0.989 and
+> `queue.py` 0.516 out of 15 modules. Expect roughly this rate of noise on real
+> repositories.
 
 ### Deriving `ai_confidence_pct`
 

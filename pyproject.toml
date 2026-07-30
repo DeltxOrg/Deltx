@@ -9,10 +9,10 @@ packages = [{include = "deltx", from = "src"}]
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = "^2.3"
-transformers = "^4.40"
-xgboost = "^2.0"
+# Floor, not cap: 4.48 is the first release with ModernBERT support, which the
+# DroidDetect-Base backbone requires.
+transformers = ">=4.48"
 scikit-learn = "^1.4"
-shap = "^0.45"
 pydantic = "^2.7"
 pydantic-settings = "^2.3"
 pandas = "^2.2"
@@ -92,9 +92,9 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-# xgboost, shap, and joblib ship no usable type information under strict mode;
-# treat them as untyped so their calls are not flagged as untyped-call errors.
-module = ["xgboost.*", "shap.*", "joblib.*"]
+# joblib ships no usable type information under strict mode; treat it as untyped
+# so its calls are not flagged as untyped-call errors.
+module = ["joblib.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
