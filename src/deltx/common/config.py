@@ -31,11 +31,20 @@ class DeltxConfig(BaseSettings):
         device: Torch device; ``auto`` picks CUDA when available, else CPU.
         max_sequence_length: Tokens per forward pass, capped at the encoder's
             native context window.
-        chunk_stride: New tokens consumed per chunk for files longer than
-            ``max_sequence_length``. Overlap is ``max_sequence_length -
+        chunk_stride: New tokens consumed per chunk when a single top-level
+            block overflows the window. Overlap is ``max_sequence_length -
             chunk_stride``.
-        batch_size: Files scored per batch in bulk mode.
+        min_tokens_to_score: Files below this token count are left unscored
+            rather than scored unreliably. A docstring-only ``__init__.py``
+            measured 98.98% AI, which is noise, not signal; 10 tokens matches
+            the minimum-length filter this project already applied to corpora.
         random_seed: Seeds any sampling performed by the pipeline.
+
+    Note:
+        There is deliberately no batch-size setting. The model pools with an
+        unmasked mean, so padding a batch changes every member's prediction;
+        scoring is one sequence per forward pass to keep results independent of
+        batch composition.
     """
 
     model_config = SettingsConfigDict(
@@ -52,7 +61,7 @@ class DeltxConfig(BaseSettings):
     device: Device = "auto"
     max_sequence_length: int = Field(default=MAX_CONTEXT_TOKENS, gt=0)
     chunk_stride: int = Field(default=MAX_CONTEXT_TOKENS // 2, gt=0)
-    batch_size: int = Field(default=8, gt=0)
+    min_tokens_to_score: int = Field(default=10, ge=0)
     random_seed: int = 42
 
     @field_validator("max_sequence_length")

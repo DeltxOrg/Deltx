@@ -117,7 +117,8 @@ def _build_encoder(config: DeltxConfig) -> nn.Module:
         # ModernBERT's `reference_compile` path invokes torch.compile, which is
         # brittle on Windows/CPU and buys nothing for single-sample inference.
         encoder_config.reference_compile = False
-        return AutoModel.from_config(encoder_config)
+        encoder: nn.Module = AutoModel.from_config(encoder_config)
+        return encoder
     except (OSError, ValueError) as exc:
         msg = f"could not build encoder from {config.encoder_repo!r}: {exc}"
         raise CheckpointError(msg) from exc

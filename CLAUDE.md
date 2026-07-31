@@ -225,9 +225,10 @@ ordinal rather than as a literal percentage likelihood.
 - **Skipped files:** non-`.py`, `setup.py`, `conftest.py`, anything under
   `__pycache__`. Unparseable or empty files are excluded from the commit average
   ("assume human when in doubt"); a commit with nothing classifiable scores 0.0
-- **Processing:** Offline batch. Target throughput ≥ 50–100 commits/minute
-  including overhead. One encoder forward pass per file should clear this
-  comfortably — but measure before quoting a figure
+- **Processing:** Offline batch. **Measured: 7.6 files/min ≈ 2.5 commits/min on
+  CPU** (Intel CPU, 8 real stdlib files, 343 tokens/s). That is 20–40× short of
+  the 50–100 commits/min target, which is therefore *not* met on CPU and should
+  not be quoted as if it were
 - **Downstream consumers:** PatchTST input channel (Stage 4), SHAP feature
   attribution (Stage 5)
 
@@ -235,6 +236,15 @@ ordinal rather than as a literal percentage likelihood.
 > where SHAP attributes over the 15-D commit vector and `ai_confidence_pct` is one
 > input feature. TreeExplainer does not apply to a transformer, and Stage 2's job is
 > to emit one well-defined scalar, not to explain itself.
+
+> **Bulk historical runs need a GPU.** Cost grows superlinearly with file length —
+> a 1,507-token file took 3.1 s while a 6,086-token file took 23.7 s, so quadratic
+> attention dominates and large files are disproportionately expensive. At the
+> measured CPU rate, a 1,000-commit history is roughly **6–7 hours**. The
+> development machine has no CUDA device (Intel Iris Xe), so the module is kept
+> importable and free of CLI-only state specifically so bulk scoring can run in a
+> GPU notebook, with the local CPU path reserved for development and small
+> repositories.
 
 ## Coding Conventions
 
