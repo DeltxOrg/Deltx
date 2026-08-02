@@ -63,6 +63,8 @@ def analyze(file_path: Path, verbose: bool) -> None:
         detector = AIDetectionInference.from_config(DeltxConfig())
         source = file_path.read_text(encoding="utf-8", errors="replace")
         result = detector.analyze_file(source, file_path)
+    except OSError as exc:
+        raise click.ClickException(f"could not read {file_path}: {exc}") from exc
     except DeltxError as exc:
         raise click.ClickException(str(exc)) from exc
 
