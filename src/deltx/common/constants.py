@@ -9,8 +9,8 @@ from typing import Final
 
 # --- Model identity -------------------------------------------------------
 
-#: HuggingFace repo holding the DroidDetect-Base detector checkpoint.
-DROIDDETECT_REPO: Final = "project-droid/DroidDetect-Base"
+#: HuggingFace repo holding the DroidDetect binary detector checkpoint.
+DROIDDETECT_REPO: Final = "project-droid/DroidDetect-Base-Binary"
 
 #: Upstream encoder the checkpoint's ``text_encoder.*`` weights were trained on.
 #: Its key set matches the checkpoint exactly (134 tensors, no divergence), so it
@@ -29,20 +29,31 @@ TEXT_EMBEDDING_DIM: Final = 768
 #:
 #: The published ``config.json`` claims 128 and so does the model card's
 #: ``TLModel.__init__`` default, but the shipped weights are
-#: ``text_projection.weight (256, 768)`` and ``classifier.weight (4, 256)``.
+#: ``text_projection.weight (256, 768)`` and ``classifier.weight (2, 256)``.
 #: 256 is what the checkpoint actually contains; building at 128 fails on a
 #: shape mismatch. Measured directly from ``pytorch_model.bin``.
 PROJECTION_DIM: Final = 256
 
-#: DroidDetect predicts four authorship classes. See ``DroidLabel``.
-NUM_CLASSES: Final = 4
+#: DroidDetect-Base-Binary predicts two authorship classes. See ``DroidLabel``.
+NUM_CLASSES: Final = 2
 
 #: ModernBERT's native context window, and the tokenizer's ``model_max_length``.
 MAX_CONTEXT_TOKENS: Final = 8192
 
-#: Tensor count in a well-formed checkpoint: 134 encoder + 2 projection + 2
-#: classifier. A different count means the published artifact changed.
-EXPECTED_CHECKPOINT_TENSORS: Final = 138
+#: Key prefix of the training-time triplet-loss module. Its 134 tensors alias
+#: the same storages as ``text_encoder.*`` — the loss simply held a reference to
+#: the encoder — so the file is byte-for-byte the size of a single backbone and
+#: dropping the prefix discards nothing. Inference never constructs the loss.
+TRAINING_ONLY_PREFIX: Final = "additional_loss."
+
+#: Tensor count in a well-formed checkpoint file: 134 encoder + 134 triplet-loss
+#: alias + 2 projection + 2 classifier. A different count means the published
+#: artifact changed.
+EXPECTED_CHECKPOINT_TENSORS: Final = 272
+
+#: Tensors remaining once :data:`TRAINING_ONLY_PREFIX` is filtered out — the set
+#: ``TLModel`` actually loads, and the size of its own ``state_dict``.
+EXPECTED_MODEL_TENSORS: Final = 138
 
 # --- File selection -------------------------------------------------------
 

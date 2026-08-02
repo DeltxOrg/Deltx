@@ -140,7 +140,7 @@ def detector(fake_tokenizer: FakeTokenizer) -> DroidDetector:
     """A detector whose model always predicts the same class."""
     config = DeltxConfig(device="cpu", max_sequence_length=8192, chunk_stride=4096)
     # Logits favouring MACHINE_GENERATED (index 1).
-    return DroidDetector(StubModel([0.0, 10.0, 0.0, 0.0]), fake_tokenizer, config)  # type: ignore[arg-type]
+    return DroidDetector(StubModel([0.0, 10.0]), fake_tokenizer, config)  # type: ignore[arg-type]
 
 
 class TestScoreSource:
@@ -166,19 +166,16 @@ class TestScoreSource:
     def test_trivially_short_source_is_refused(
         self, fake_tokenizer: FakeTokenizer
     ) -> None:
-        """A docstring-only __init__.py measured 98.98% AI: noise, not signal."""
+        """Below ~10 tokens the score is erratic: a docstring-only __init__.py
+        measures 0.406 where a single import line measures 0.981."""
         config = DeltxConfig(device="cpu", min_tokens_to_score=10)
-        detector = DroidDetector(
-            StubModel([0.0, 10.0, 0.0, 0.0]), fake_tokenizer, config
-        )  # type: ignore[arg-type]
+        detector = DroidDetector(StubModel([0.0, 10.0]), fake_tokenizer, config)  # type: ignore[arg-type]
         with pytest.raises(DetectionError, match="token floor"):
             detector.score_source('"""A module."""\n')
 
     def test_floor_can_be_disabled(self, fake_tokenizer: FakeTokenizer) -> None:
         config = DeltxConfig(device="cpu", min_tokens_to_score=0)
-        detector = DroidDetector(
-            StubModel([0.0, 10.0, 0.0, 0.0]), fake_tokenizer, config
-        )  # type: ignore[arg-type]
+        detector = DroidDetector(StubModel([0.0, 10.0]), fake_tokenizer, config)  # type: ignore[arg-type]
         assert detector.score_source('"""A module."""\n').token_count > 0
 
     def test_multi_chunk_source_runs_one_pass_per_chunk(
@@ -186,7 +183,7 @@ class TestScoreSource:
     ) -> None:
         """Chunks are scored individually; nothing is padded into a batch."""
         config = DeltxConfig(device="cpu", max_sequence_length=30, chunk_stride=15)
-        model = StubModel([0.0, 10.0, 0.0, 0.0])
+        model = StubModel([0.0, 10.0])
         detector = DroidDetector(model, fake_tokenizer, config)  # type: ignore[arg-type]
         source = "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(40))
 

@@ -52,7 +52,7 @@ score (`ai_confidence_pct`) quantifying the likelihood that its code was
 LLM-generated. This score occupies index `[4]` of the 15-dimensional data vector as
 an Evolutionary Driver.
 
-Detection is performed by **DroidDetect-Base**, a published pre-trained
+Detection is performed by **DroidDetect-Base-Binary**, a published pre-trained
 AI-generated-code detector, used directly as the Stage 2 detector. Deltx neither
 trains nor re-evaluates a detector: the model is already trained, benchmarked, and
 peer-reviewed by its authors, and Deltx consumes it as a fixed component. All
@@ -61,34 +61,37 @@ its outputs correctly, and aggregating file-level predictions to the commit leve
 
 ### Detection Model
 
-**Model:** `project-droid/DroidDetect-Base` (HuggingFace), Apache-2.0.
+**Model:** `project-droid/DroidDetect-Base-Binary` (HuggingFace), Apache-2.0.
 **Paper:** Orel, Paul et al., *Droid: A Resource Suite for AI-Generated Code
 Detection*, EMNLP 2025 Main ([arXiv:2507.10583](https://arxiv.org/abs/2507.10583)).
 
 | Property           | Value                                                          |
 |--------------------|----------------------------------------------------------------|
 | Backbone           | `answerdotai/ModernBERT-base` (encoder-only, 149M params)       |
-| Head               | mean-pool → `Linear(768 → 256)` → ReLU → `Linear(256 → 4)`      |
-| Task               | 4-class classification                                          |
+| Head               | mean-pool → `Linear(768 → 256)` → ReLU → `Linear(256 → 2)`      |
+| Task               | Binary classification: human vs. machine                        |
 | Context window     | 8,192 tokens (ModernBERT native) — most source files fit whole   |
 | Training corpus    | Filtered `project-droid/DroidCollection` (7 languages incl. Python) |
 | Training objective | `CrossEntropyLoss + 0.1 × BatchHardSoftMarginTripletLoss`        |
 
-A `-Large` variant exists (ModernBERT-large, 396M). Base is the default: the
-reported weighted-F1 gap is well under a point (see below) while Base is ~2.7×
-smaller, and Stage 2 runs over every commit in a repository's history.
+The published suite offers binary, ternary, and four-class heads in Base and Large
+sizes. Deltx takes the **binary Base** checkpoint on two grounds. The binary setup
+is by a wide margin the most reliable — **99.18 weighted F1**, against 94.36 for
+ternary and 92.95 for four-class — and Stage 2 needs exactly one scalar, so the
+finer heads' extra classes would be collapsed on arrival anyway. Taking the binary
+head moves that collapse into the model's own training, where machine-refined code
+is folded in with generated code as a training target rather than summed after the
+fact. Large trails Base by well under a point (99.25 vs 99.18) at ~2.7× the size,
+and Stage 2 runs over every commit in a repository's history.
 
 **In-domain weighted F1, as reported in the paper.** These are the authors'
 published numbers and are the basis on which Deltx adopts the model; Deltx does not
 reproduce them.
 
-| Variant           | 2-class | 3-class | 4-class |
-|-------------------|---------|---------|---------|
-| DroidDetect-Base  | 99.18   | 94.36   | 92.95   |
-| DroidDetect-Large | 99.25   | 95.17   | 94.30   |
-
-The 2-class column is the operating point Deltx actually uses — see *Deriving
-ai_confidence_pct* below.
+| Variant                  | 2-class |
+|--------------------------|---------|
+| DroidDetect-Base-Binary  | 99.18   |
+| DroidDetect-Large-Binary | 99.25   |
 
 ### Checkpoint Loading Contract
 
@@ -98,19 +101,21 @@ There is **no modeling module and no `auto_map`**, and `config.json` is minimal:
 
 ```json
 {"model_type": "custom_model", "architectures": ["Model"],
- "projection_dim": 128, "num_classes": 4}
+ "projection_dim": 128, "num_classes": 2}
 ```
 
 > **`projection_dim` in `config.json` is wrong.** It says `128`, and so does the
 > model card's `TLModel.__init__` default, but the shipped weights are
-> `text_projection.weight (256, 768)` and `classifier.weight (4, 256)`. The real
-> head is **768 → 256 → 4**. Build to the weights, not to the config; instantiating
+> `text_projection.weight (256, 768)` and `classifier.weight (2, 256)`. The real
+> head is **768 → 256 → 2**. Build to the weights, not to the config; instantiating
 > at 128 fails with a shape mismatch. Verified by inspecting `pytorch_model.bin`
-> directly — do not trust either published value.
+> directly — do not trust either published value. The same error appears verbatim
+> across the suite's checkpoints, so it is a property of how they were exported,
+> not a one-off typo.
 
-The checkpoint's actual contents, measured rather than assumed: **138 tensors under
-exactly three prefixes** — `text_encoder.*` (134), `text_projection.*` (2),
-`classifier.*` (2).
+The checkpoint's actual contents, measured rather than assumed: **272 tensors under
+exactly four prefixes** — `text_encoder.*` (134), `additional_loss.*` (134),
+`text_projection.*` (2), `classifier.*` (2).
 
 Consequences, all load-bearing:
 
@@ -121,13 +126,21 @@ Consequences, all load-bearing:
 2. **The encoder keys match upstream `answerdotai/ModernBERT-base` exactly** —
    134 tensors, zero missing, zero unexpected. So `AutoModel.from_config` on the
    upstream config gives a container the checkpoint drops straight into.
-3. **`additional_loss.*` keys do not ship.** The training-time
-   `BatchHardSoftMarginTripletLoss` wrapper left nothing in the checkpoint, so no
-   key filtering is needed. Load with **`strict=True`** — it is the stronger
-   guarantee, and it will catch any future checkpoint revision that changes shape
-   instead of silently tolerating an unloaded classifier head.
+3. **`additional_loss.*` ships and must be filtered out.** The training-time
+   `BatchHardSoftMarginTripletLoss` held a reference to the encoder, so the export
+   captured a second full ModernBERT under
+   `additional_loss.sentence_embedder.*` — 134 tensors that inference has no use
+   for. These are *aliases*, not a second copy: the file is 569 MB, byte-identical
+   in size to a checkpoint carrying one backbone, because `torch.save` serialises
+   shared storages once. Dropping the prefix discards nothing.
+   Filter that one known prefix and load the remaining **138 with `strict=True`**;
+   do not reach for a blanket `strict=False`. Strictness over what remains is what
+   guarantees the projection and classifier weights actually came from the
+   checkpoint rather than staying at their random initialisation, and it will still
+   catch any future revision that changes shape.
 4. **Do not add `sentence-transformers` as a runtime dependency.** It is needed
-   only to construct the training-time loss, which inference omits entirely.
+   only to construct the training-time loss, which inference omits entirely —
+   the loss's serialised weights are dropped at load time.
 5. **The tokenizer loads normally** via `AutoTokenizer.from_pretrained`:
    `PreTrainedTokenizerFast`, vocab 50,280, `model_max_length` 8192, `[PAD]` /
    `[CLS]` / `[SEP]` all present. It wraps input in `[CLS]`/`[SEP]`, and those
@@ -145,43 +158,51 @@ Consequences, all load-bearing:
 
 ### Label Semantics
 
-The four classes are DroidCollection's `Label` values:
+| Index | Label               | Meaning                                              |
+|-------|---------------------|------------------------------------------------------|
+| 0     | `HUMAN_GENERATED`   | Human-authored                                        |
+| 1     | `MACHINE_GENERATED` | Any AI involvement — generated, refined, or adversarial |
 
-| Index | Label                           | Meaning                                        |
-|-------|---------------------------------|------------------------------------------------|
-| 0     | `HUMAN_GENERATED`               | Human-authored                                  |
-| 1     | `MACHINE_GENERATED`             | LLM-authored                                    |
-| 2     | `MACHINE_REFINED`               | Human code an LLM rewrote — mixed authorship    |
-| 3     | `MACHINE_GENERATED_ADVERSARIAL` | LLM output prompted to read as human            |
+Class 1 is deliberately broad. The paper's binary setup maps the ternary labels
+(human-written, AI-generated, AI-refined) onto two targets, so a human file an LLM
+rewrote is a class-1 training example. `MACHINE_REFINED` is therefore not a class
+Deltx discards — it is one the model was trained to report as machine.
 
-**This order is verified, not assumed.** `config.json` carries no `id2label`, so
-nothing in the artifact pins it — and since the same file misreports
-`projection_dim`, the card alone was not trustworthy. Scoring 120 balanced
-Python rows from the DroidCollection *test* split produced a clean diagonal:
-100% of `HUMAN_GENERATED` → index 0, 97% of `MACHINE_GENERATED` → 1, 83% of
-`MACHINE_REFINED` → 2, 93% of `MACHINE_GENERATED_ADVERSARIAL` → 3, for 93.3%
-4-class accuracy against the paper's reported 92.95. Mean and `[CLS]` pooling
-scored identically, confirming the documented mean pool. The order is asserted in
-the test suite; read it wrong and `ai_confidence_pct` inverts silently.
+**Verify this order against the artifact; do not take it from the card.**
+`config.json` carries no `id2label`, and the model card that states
+`{"0": "HUMAN_GENERATED", "1": "MACHINE_GENERATED"}` is the same card that
+misreports `projection_dim`, so it is corroboration rather than proof. The test
+suite pins the order behind `@pytest.mark.slow`: complete pre-LLM stdlib modules
+must land on index 0 and known-LLM source on index 1, separated by a wide margin
+— a near-boundary pass on both would indicate a reordered head or an unloaded
+classifier. Read the order wrong and `ai_confidence_pct` inverts silently while
+every other test still passes.
 
-> **Feed complete, top-level files — never indented fragments.** This is the
-> sharpest practical constraint on the module. Complete stdlib modules
-> (`textwrap.py`, `difflib.py`, `argparse.py`, …) score a median P(AI) of **0.026**,
-> 13/15 correctly human. The *same code* extracted as individual methods via
-> `inspect.getsource` — i.e. 4-space-indented fragments torn out of class context —
-> scores P(AI) ≈ **0.999**. Leading indentation and mid-scope truncation are
-> out-of-distribution and drive confident false positives.
+> **Feed complete files — never short fragments.** This is the sharpest practical
+> constraint on the module. Fifteen complete stdlib modules score a median P(AI)
+> of **0.198**, 13/15 correctly human. Forty individual methods pulled from eight
+> of those same modules via `inspect.getsource` score a median of **0.604**, with
+> **23/40** over the 0.5 threshold and a maximum of 0.996. Identical code, a 3×
+> higher median and a 4.5× higher false-positive rate, purely from being served in
+> pieces.
+>
+> **The cause is decontextualization, not indentation.** Scoring each fragment a
+> second time with `textwrap.dedent` applied — same code, no leading whitespace —
+> moves the median *up* to **0.831** and the false-positive count to **29/40**.
+> Stripping the indentation makes things worse, so do not reach for dedenting as a
+> mitigation. What the model reacts to is a short, self-contained-looking unit torn
+> out of its surroundings, which is exactly what an LLM is usually asked to emit.
 >
 > Two consequences. First, this is independent support for whole-file scoring over
-> diff hunks: hunks are exactly the indented fragments that fail. Second, chunking
-> files past the context window is **not** a free operation — a naive token window
-> starts chunk 2 at arbitrary indentation and manufactures the failure case. Split
-> on top-level boundaries where possible, and treat any chunk that isn't
-> top-level-aligned as suspect.
+> diff hunks: hunks are exactly the decontextualized fragments that fail. Second,
+> chunking past the context window is **not** free — every chunk after the first is
+> a fragment, so `split_into_chunks` cuts on top-level boundaries to keep chunks as
+> large and self-contained as possible, and treats a chunk that could not be
+> top-level-aligned as suspect. Prefer fewer, larger chunks over more, smaller ones.
 >
-> Residual false positives on ordinary human code remain: `csv.py` scored 0.989 and
-> `queue.py` 0.516 out of 15 modules. Expect roughly this rate of noise on real
-> repositories.
+> Residual false positives on whole human files remain: of 15 stdlib modules,
+> `heapq.py` scored 0.769 and `queue.py` 0.540. Expect roughly this rate of noise
+> on real repositories.
 
 ### Deriving `ai_confidence_pct`
 
@@ -189,16 +210,30 @@ the test suite; read it wrong and `ai_confidence_pct` inverts silently.
 ai_confidence_pct = 100 × (1 − P(HUMAN_GENERATED))
 ```
 
-Rationale: Deltx needs a scalar for *degree of AI involvement*, and all three
-machine classes represent AI involvement. Collapsing them to their complement of
-class 0 turns the noisy 4-way decision (92.95 F1) into the reliable
-human-vs-machine decision (99.18 F1) without discarding the adversarial and
-refined classes — a `MACHINE_GENERATED` sample misread as `MACHINE_REFINED` still
-scores high, because the confusion is *inside* the collapsed group.
+Over two classes this equals `100 × P(MACHINE_GENERATED)`. It is written as the
+complement so the definition stays anchored to class 0 — the class whose meaning
+is fixed and directly verified — rather than to whatever the machine class happens
+to encompass.
 
-Retain the full 4-way probability distribution on every result object. Stages 3–5
-may want the finer signal (e.g. `MACHINE_REFINED` is a plausible quality-decay
-predictor in its own right), and discarding it here would be irreversible.
+Rationale: Deltx needs one scalar for *degree of AI involvement*, and the binary
+head emits exactly that at the detector's most reliable operating point (99.18
+weighted F1). Because the model was trained with refined code folded into class 1,
+no confusion between kinds of AI involvement can move this number; the collapse
+happens during training rather than in post-processing.
+
+Retain the full probability distribution on every result object rather than only
+the scalar. It costs nothing, keeps the result self-describing for Stages 3–5, and
+means a future switch to a finer-grained head changes the distribution's width
+without changing the shape of the contract.
+
+> **Stages 3–5 get no `MACHINE_REFINED` channel.** The binary head does not
+> distinguish refined from generated code, so a "was this human code an LLM
+> rewrote?" feature is not available downstream and cannot be recovered from a
+> stored result. This is a deliberate trade: the finer signal is speculative,
+> while the binary head's ~6-point F1 advantage over the four-class head is
+> measured. If a later stage establishes that refinement predicts decay
+> independently, that is a reason to revisit the checkpoint choice — not to
+> post-process this score.
 
 ### Internal Pipeline (5 stages)
 
@@ -206,8 +241,8 @@ predictor in its own right), and discarding it here would be irreversible.
 2. Tokenize with the ModernBERT tokenizer; files over 8,192 tokens are split into
    overlapping chunks, and their chunk probabilities are combined by token-count
    weighting (the same weighting logic as the file→commit step)
-3. Single forward pass per file (or per chunk) → 4-class logits → softmax
-4. Collapse to `P(AI) = 1 − P(HUMAN_GENERATED)`
+3. Single forward pass per file (or per chunk) → 2-class logits → softmax
+4. Read `P(AI) = 1 − P(HUMAN_GENERATED)`
 5. Aggregate file → commit by LOC-weighted average → `ai_confidence_pct ∈ [0, 100]`
 
 The score is the model's raw softmax mass, not a calibrated probability — a
@@ -220,7 +255,7 @@ ordinal rather than as a literal percentage likelihood.
 - **Input:** Raw Python source of every file modified in a commit, plus metadata
   (commit hash, timestamp, author)
 - **Output:** `ai_confidence_pct ∈ [0, 100]` where 0 = high confidence human,
-  100 = high confidence AI; plus the retained 4-way distribution
+  100 = high confidence AI; plus the retained 2-class distribution
 - **Granularity:** File-level classification → commit-level LOC-weighted average
 - **Skipped files:** non-`.py`, `setup.py`, `conftest.py`, anything under
   `__pycache__`. Unparseable or empty files are excluded from the commit average
@@ -259,7 +294,9 @@ ordinal rather than as a literal percentage likelihood.
 - **No hardcoded model paths or thresholds** — all configurable via `common/config.py`
 - **Imports:** standard library → third-party → local, enforced by ruff's isort rules
 - **Tests never download the checkpoint.** Mock the detector; mark anything that
-  needs real weights `@pytest.mark.slow`.
+  needs real weights `@pytest.mark.slow`. The marker only labels — `addopts`
+  carries `-m 'not slow'` to actually deselect them, and removing it silently
+  puts a 569 MB download back in the default suite.
 
 ## Key Terminology
 

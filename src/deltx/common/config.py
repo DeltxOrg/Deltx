@@ -35,9 +35,11 @@ class DeltxConfig(BaseSettings):
             block overflows the window. Overlap is ``max_sequence_length -
             chunk_stride``.
         min_tokens_to_score: Files below this token count are left unscored
-            rather than scored unreliably. A docstring-only ``__init__.py``
-            measured 98.98% AI, which is noise, not signal; 10 tokens matches
-            the minimum-length filter this project already applied to corpora.
+            rather than scored unreliably. Below roughly ten tokens the output
+            is erratic, not merely uncertain: a docstring-only ``__init__.py``
+            measures 0.406 while a single import line measures 0.981, with
+            nothing to distinguish them in kind. 10 tokens matches the
+            minimum-length filter this project already applied to corpora.
         random_seed: Seeds any sampling performed by the pipeline.
 
     Note:

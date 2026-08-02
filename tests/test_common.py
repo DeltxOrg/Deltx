@@ -38,7 +38,7 @@ class TestExceptions:
 class TestDeltxConfig:
     def test_defaults(self) -> None:
         config = DeltxConfig()
-        assert config.detector_repo == "project-droid/DroidDetect-Base"
+        assert config.detector_repo == "project-droid/DroidDetect-Base-Binary"
         assert config.max_sequence_length == MAX_CONTEXT_TOKENS
         assert config.random_seed == 42
 

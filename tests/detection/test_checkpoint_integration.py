@@ -4,16 +4,22 @@ Marked ``slow``: these download ~600 MB on first run and are excluded from the
 default suite. Run with ``poetry run pytest -m slow``.
 
 They exist to catch a specific class of silent failure. Nothing in the published
-artifact pins the output index order, so if a checkpoint revision reordered the
-classes, every other test would still pass while ``ai_confidence_pct`` came out
-inverted.
+artifact pins the output index order — ``config.json`` carries no ``id2label``,
+and the model card is not a reliable substitute, since the same card misstates
+the projection width. If a checkpoint revision reordered the classes, every
+other test would still pass while ``ai_confidence_pct`` came out inverted.
 """
 
 import pytest
 import torch
 
 from deltx.common.config import DeltxConfig
-from deltx.common.constants import EXPECTED_CHECKPOINT_TENSORS, NUM_CLASSES
+from deltx.common.constants import (
+    EXPECTED_MODEL_TENSORS,
+    NUM_CLASSES,
+    PROJECTION_DIM,
+    TEXT_EMBEDDING_DIM,
+)
 from deltx.detection.detector import DroidDetector
 from deltx.detection.models import DroidLabel
 
@@ -54,18 +60,26 @@ def detector() -> DroidDetector:
 
 
 def test_checkpoint_loads_strictly(detector: DroidDetector) -> None:
-    """A strict load proves no weight was silently left uninitialised."""
+    """A strict load proves no weight was silently left uninitialised.
+
+    The model holds only the 138 tensors it uses: the file's 134
+    ``additional_loss.*`` keys are filtered out before loading.
+    """
     state = detector.model.state_dict()
-    assert len(state) == EXPECTED_CHECKPOINT_TENSORS
-    assert state["text_projection.weight"].shape == (256, 768)
-    assert state["classifier.weight"].shape == (NUM_CLASSES, 256)
+    assert len(state) == EXPECTED_MODEL_TENSORS
+    assert not any(key.startswith("additional_loss.") for key in state)
+    assert state["text_projection.weight"].shape == (
+        PROJECTION_DIM,
+        TEXT_EMBEDDING_DIM,
+    )
+    assert state["classifier.weight"].shape == (NUM_CLASSES, PROJECTION_DIM)
 
 
 def test_index_zero_is_human(detector: DroidDetector) -> None:
     """Complete pre-LLM stdlib modules must score as human.
 
-    Guards the index order. If the classes were reordered upstream, this file
-    would score near 1.0 instead of near 0.0.
+    Guards the index order. If the two classes were reordered upstream, this
+    file would score near 1.0 instead of near 0.0.
     """
     import sysconfig
     from pathlib import Path
@@ -78,11 +92,31 @@ def test_index_zero_is_human(detector: DroidDetector) -> None:
     assert result.distribution.p_ai < 0.5
 
 
-def test_llm_written_source_scores_as_machine(detector: DroidDetector) -> None:
+def test_index_one_is_machine(detector: DroidDetector) -> None:
     """The positive direction of the same guard."""
     result = detector.score_source(AI_SOURCE)
-    assert result.distribution.predicted_label is not DroidLabel.HUMAN_GENERATED
+    assert result.distribution.predicted_label is DroidLabel.MACHINE_GENERATED
     assert result.distribution.p_ai > 0.5
+
+
+def test_the_two_directions_are_separated(detector: DroidDetector) -> None:
+    """Both guards passing by a hair would not prove the order.
+
+    A model whose head was reordered, or whose classifier never loaded, tends
+    to sit near the decision boundary on both inputs. Requiring the human and
+    machine samples to land on opposite sides *with* a margin is what makes the
+    pair informative rather than coincidental.
+    """
+    import sysconfig
+    from pathlib import Path
+
+    human = detector.score_source(
+        (Path(sysconfig.get_paths()["stdlib"]) / "textwrap.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    machine = detector.score_source(AI_SOURCE)
+    assert machine.distribution.p_ai - human.distribution.p_ai > 0.5
 
 
 def test_scoring_is_independent_of_batch_composition(

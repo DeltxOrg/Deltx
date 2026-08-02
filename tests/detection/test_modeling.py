@@ -10,9 +10,11 @@ from torch import nn
 from deltx.common.config import DeltxConfig
 from deltx.common.constants import (
     EXPECTED_CHECKPOINT_TENSORS,
+    EXPECTED_MODEL_TENSORS,
     NUM_CLASSES,
     PROJECTION_DIM,
     TEXT_EMBEDDING_DIM,
+    TRAINING_ONLY_PREFIX,
 )
 from deltx.common.exceptions import CheckpointError
 from deltx.detection import modeling
@@ -70,12 +72,73 @@ class TestTLModel:
         )
         assert torch.allclose(masked, unmasked)
 
-    def test_expected_tensor_count_is_documented(self) -> None:
-        """134 encoder + 2 projection + 2 classifier."""
-        assert EXPECTED_CHECKPOINT_TENSORS == 138
+    def test_expected_tensor_counts_are_documented(self) -> None:
+        """272 in the file; 138 once the triplet-loss alias is filtered out."""
+        assert EXPECTED_CHECKPOINT_TENSORS == 272
+        assert EXPECTED_MODEL_TENSORS == 138
+        assert EXPECTED_CHECKPOINT_TENSORS - EXPECTED_MODEL_TENSORS == 134
 
 
 class TestLoadDetector:
+    @staticmethod
+    def _head_weights() -> dict[str, torch.Tensor]:
+        """The four head tensors a strict load into ``StubEncoder`` requires."""
+        return {
+            "text_projection.weight": torch.zeros(PROJECTION_DIM, TEXT_EMBEDDING_DIM),
+            "text_projection.bias": torch.zeros(PROJECTION_DIM),
+            "classifier.weight": torch.zeros(NUM_CLASSES, PROJECTION_DIM),
+            "classifier.bias": torch.zeros(NUM_CLASSES),
+        }
+
+    def _patch_download(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        state: dict[str, torch.Tensor],
+    ) -> DeltxConfig:
+        """Point ``load_detector`` at a local state dict and a stub encoder."""
+        weights = tmp_path / "pytorch_model.bin"
+        torch.save(state, weights)
+        monkeypatch.setattr(modeling, "hf_hub_download", lambda *a, **k: str(weights))
+        monkeypatch.setattr(
+            modeling.AutoTokenizer, "from_pretrained", lambda *a, **k: object()
+        )
+        monkeypatch.setattr(modeling, "_build_encoder", lambda config: StubEncoder())
+        return DeltxConfig(model_cache_dir=tmp_path, device="cpu")
+
+    def test_training_only_keys_are_filtered_before_a_strict_load(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The checkpoint ships the triplet-loss module; a strict load must
+        still succeed, because those keys are dropped rather than tolerated."""
+        state = self._head_weights()
+        state[f"{TRAINING_ONLY_PREFIX}sentence_embedder.layers.0.attn.Wo.weight"] = (
+            torch.zeros(TEXT_EMBEDDING_DIM, TEXT_EMBEDDING_DIM)
+        )
+        state[f"{TRAINING_ONLY_PREFIX}sentence_embedder.final_norm.weight"] = (
+            torch.zeros(TEXT_EMBEDDING_DIM)
+        )
+
+        config = self._patch_download(monkeypatch, tmp_path, state)
+        model, _ = modeling.load_detector(config)
+
+        assert not any(
+            key.startswith(TRAINING_ONLY_PREFIX) for key in model.state_dict()
+        )
+        assert model.classifier.weight.shape == (NUM_CLASSES, PROJECTION_DIM)
+
+    def test_a_missing_head_tensor_still_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Filtering must not weaken the guarantee it is filtering around: an
+        absent classifier bias would otherwise stay randomly initialised."""
+        state = self._head_weights()
+        del state["classifier.bias"]
+
+        config = self._patch_download(monkeypatch, tmp_path, state)
+        with pytest.raises(CheckpointError, match="does not match the architecture"):
+            modeling.load_detector(config)
+
     def test_download_failure_becomes_checkpoint_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

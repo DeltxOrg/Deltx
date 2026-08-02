@@ -1,4 +1,4 @@
-"""DroidDetect-Base architecture definition and checkpoint loading.
+"""DroidDetect-Base-Binary architecture definition and checkpoint loading.
 
 The published checkpoint cannot be loaded by ``AutoModelForSequenceClassification``:
 its ``config.json`` declares ``model_type: "custom_model"`` and
@@ -6,6 +6,12 @@ its ``config.json`` declares ``model_type: "custom_model"`` and
 modeling module. The architecture is therefore reconstructed here, mirroring the
 model card's ``TLModel`` minus its training-time loss, and the weights are loaded
 into it directly.
+
+Neither published value describing the head is correct: ``config.json`` and the
+model card both claim a projection width of 128, while the shipped weights are
+768 -> 256 -> 2. The export also carries the training-time triplet loss, whose
+tensors are filtered out at load time. Both facts were established by reading
+``pytorch_model.bin``, not its documentation.
 """
 
 import logging
@@ -25,6 +31,7 @@ from deltx.common.constants import (
     NUM_CLASSES,
     PROJECTION_DIM,
     TEXT_EMBEDDING_DIM,
+    TRAINING_ONLY_PREFIX,
 )
 from deltx.common.exceptions import CheckpointError
 
@@ -42,7 +49,7 @@ class TLModel(nn.Module):
     Attributes:
         text_encoder: The ModernBERT backbone.
         text_projection: ``Linear(768 -> 256)``.
-        classifier: ``Linear(256 -> 4)``.
+        classifier: ``Linear(256 -> 2)``.
     """
 
     def __init__(
@@ -127,13 +134,18 @@ def _build_encoder(config: DeltxConfig) -> nn.Module:
 def load_detector(
     config: DeltxConfig | None = None,
 ) -> tuple[TLModel, PreTrainedTokenizerBase]:
-    """Download and load DroidDetect-Base, ready for inference.
+    """Download and load DroidDetect-Base-Binary, ready for inference.
 
-    Loads with ``strict=True``. The checkpoint contains exactly 138 tensors
-    under three prefixes and no stray training-time keys, so strictness costs
-    nothing and will surface any upstream revision that changes shape — far
-    better than a permissive load that silently leaves the classifier head at
-    its random initialisation.
+    The checkpoint ships the training-time triplet-loss module alongside the
+    model proper: 272 tensors, of which 134 sit under ``additional_loss.*`` and
+    alias the encoder's own storages. Those keys are dropped, and the remaining
+    138 are loaded with ``strict=True``.
+
+    Filtering one known prefix is preferred over a blanket ``strict=False``.
+    Strictness on what remains still guarantees every projection and classifier
+    weight came from the checkpoint, rather than silently leaving the head at
+    its random initialisation; and it will surface any upstream revision that
+    changes shape.
 
     Args:
         config: Active configuration. A default is constructed when omitted.
@@ -173,9 +185,20 @@ def load_detector(
             EXPECTED_CHECKPOINT_TENSORS,
         )
 
+    weights = {
+        key: tensor
+        for key, tensor in state_dict.items()
+        if not key.startswith(TRAINING_ONLY_PREFIX)
+    }
+    logger.debug(
+        "dropped %d training-time tensors under %r",
+        len(state_dict) - len(weights),
+        TRAINING_ONLY_PREFIX,
+    )
+
     model = TLModel(_build_encoder(config))
     try:
-        model.load_state_dict(state_dict, strict=True)
+        model.load_state_dict(weights, strict=True)
     except RuntimeError as exc:
         msg = (
             f"checkpoint does not match the architecture built for it: {exc}\n"
@@ -189,6 +212,6 @@ def load_detector(
     logger.info(
         "Detector ready on %s (%d tensors loaded)",
         config.resolved_device,
-        len(state_dict),
+        len(weights),
     )
     return model, tokenizer

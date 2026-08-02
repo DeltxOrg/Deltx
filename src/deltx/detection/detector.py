@@ -12,6 +12,7 @@ import torch
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from deltx.common.config import DeltxConfig
+from deltx.common.constants import NUM_CLASSES
 from deltx.common.exceptions import DetectionError
 from deltx.detection.modeling import TLModel, load_detector
 from deltx.detection.models import ClassDistribution
@@ -164,7 +165,7 @@ def split_into_chunks(
 
 
 class DroidDetector:
-    """Scores Python source with DroidDetect-Base."""
+    """Scores Python source with DroidDetect-Base-Binary."""
 
     def __init__(
         self,
@@ -246,7 +247,7 @@ class DroidDetector:
             )
             raise DetectionError(msg)
 
-        totals = [0.0, 0.0, 0.0, 0.0]
+        totals = [0.0] * NUM_CLASSES
         total_tokens = 0
         for chunk in chunks:
             weight = len(chunk)

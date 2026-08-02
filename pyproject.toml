@@ -52,10 +52,6 @@ ignore = ["ANN101", "ANN102"]
 [tool.ruff.lint.per-file-ignores]
 # Tests rely on `assert`; the language-model import guard is intentionally broad.
 "tests/**" = ["S101"]
-# The classifier follows scikit-learn's ML naming convention (`X` for feature
-# matrices, `y` for labels), which N803/N806 would otherwise reject as non-snake.
-"src/deltx/detection/classifier.py" = ["N803", "N806"]
-"tests/detection/test_classifier.py" = ["N803", "N806"]
 
 [tool.ruff.lint.flake8-bugbear]
 # `Path(...)` is immutable, so it is safe as a default argument value.
@@ -100,7 +96,10 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=deltx --cov-report=term-missing -v"
+# `-m "not slow"` is what actually keeps the default suite offline; the marker
+# alone deselects nothing. Without it `pytest` downloads the 569 MB checkpoint.
+# Run the excluded tests with `pytest -m slow`.
+addopts = "--cov=deltx --cov-report=term-missing -v -m 'not slow'"
 markers = [
     "slow: tests that require the language model to be downloaded/cached",
     "integration: end-to-end tests exercising the full detection pipeline",

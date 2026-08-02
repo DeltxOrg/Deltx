@@ -19,7 +19,7 @@ SOURCE = "def f():\n    return 1\n"
 class StubDetector:
     def score_source(self, source: str) -> ScoredSource:
         return ScoredSource(
-            distribution=ClassDistribution.from_probabilities([0.25, 0.25, 0.25, 0.25]),
+            distribution=ClassDistribution.from_probabilities([0.25, 0.75]),
             token_count=10,
             chunk_count=1,
         )

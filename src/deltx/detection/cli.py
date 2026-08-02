@@ -44,7 +44,7 @@ def _result_row(result: FileAnalysisResult) -> tuple[str, str, str, str]:
 @click.group()
 @click.version_option(package_name="deltx")
 def cli() -> None:
-    """Detect AI-authored Python code with DroidDetect-Base."""
+    """Detect AI-authored Python code with DroidDetect-Base-Binary."""
 
 
 @cli.command()

@@ -29,13 +29,10 @@ class StubDetector:
         if self.fail:
             msg = "stub failure"
             raise DetectionError(msg)
-        rest = self.p_ai / 3
         return ScoredSource(
             distribution=ClassDistribution(
                 human_generated=1.0 - self.p_ai,
-                machine_generated=rest,
-                machine_refined=rest,
-                machine_generated_adversarial=rest,
+                machine_generated=self.p_ai,
             ),
             token_count=10,
             chunk_count=1,

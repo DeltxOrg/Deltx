@@ -10,39 +10,35 @@ from deltx.common.constants import AI_CONFIDENCE_MAX, AI_CONFIDENCE_MIN
 
 
 class DroidLabel(IntEnum):
-    """The four authorship classes DroidDetect predicts.
+    """The two authorship classes DroidDetect-Base-Binary predicts.
+
+    ``MACHINE_GENERATED`` covers every form of AI involvement: the binary
+    training setup folds machine-refined code in with outright generated code,
+    so a human file an LLM rewrote belongs to class 1.
 
     Index order comes from the model card, not from the checkpoint: the
     published ``config.json`` carries no ``id2label``, so nothing in the
-    artifact pins this mapping. Reading it wrong inverts ``ai_confidence_pct``
-    silently, so the order is asserted in the test suite.
+    artifact pins this mapping — and the same file misreports the projection
+    width, so the card is not self-evidently reliable. Reading the order wrong
+    inverts ``ai_confidence_pct`` silently, so it is asserted in the test suite.
     """
 
     HUMAN_GENERATED = 0
     MACHINE_GENERATED = 1
-    MACHINE_REFINED = 2
-    MACHINE_GENERATED_ADVERSARIAL = 3
 
 
 class ClassDistribution(BaseModel):
-    """A softmax distribution over the four :class:`DroidLabel` classes."""
+    """A softmax distribution over the two :class:`DroidLabel` classes."""
 
     model_config = ConfigDict(frozen=True)
 
     human_generated: float = Field(ge=0.0, le=1.0)
     machine_generated: float = Field(ge=0.0, le=1.0)
-    machine_refined: float = Field(ge=0.0, le=1.0)
-    machine_generated_adversarial: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _check_normalised(self) -> "ClassDistribution":
         """Reject distributions that do not sum to 1 within float tolerance."""
-        total = (
-            self.human_generated
-            + self.machine_generated
-            + self.machine_refined
-            + self.machine_generated_adversarial
-        )
+        total = self.human_generated + self.machine_generated
         if abs(total - 1.0) > 1e-4:
             msg = f"class probabilities must sum to 1.0, got {total!r}"
             raise ValueError(msg)
@@ -50,7 +46,7 @@ class ClassDistribution(BaseModel):
 
     @classmethod
     def from_probabilities(cls, probabilities: list[float]) -> "ClassDistribution":
-        """Build from a 4-element probability list in :class:`DroidLabel` order.
+        """Build from a 2-element probability list in :class:`DroidLabel` order.
 
         Args:
             probabilities: Softmax output ordered by ``DroidLabel`` index.
@@ -59,7 +55,7 @@ class ClassDistribution(BaseModel):
             The corresponding distribution.
 
         Raises:
-            ValueError: If exactly four probabilities were not supplied.
+            ValueError: If exactly two probabilities were not supplied.
         """
         if len(probabilities) != len(DroidLabel):
             msg = f"expected {len(DroidLabel)} probabilities, got {len(probabilities)}"
@@ -67,32 +63,25 @@ class ClassDistribution(BaseModel):
         return cls(
             human_generated=probabilities[DroidLabel.HUMAN_GENERATED],
             machine_generated=probabilities[DroidLabel.MACHINE_GENERATED],
-            machine_refined=probabilities[DroidLabel.MACHINE_REFINED],
-            machine_generated_adversarial=probabilities[
-                DroidLabel.MACHINE_GENERATED_ADVERSARIAL
-            ],
         )
 
     @property
     def p_ai(self) -> float:
-        """Probability of any AI involvement: ``1 - P(HUMAN_GENERATED)``.
+        """Probability of AI involvement: ``1 - P(HUMAN_GENERATED)``.
 
-        Collapsing the three machine classes into their complement of class 0
-        turns the noisy 4-way decision into the reliable human-vs-machine one:
-        a ``MACHINE_GENERATED`` sample misread as ``MACHINE_REFINED`` still
-        scores high, because the confusion stays inside the collapsed group.
+        Equal to ``machine_generated`` over two classes, and written as the
+        complement so the definition of ``ai_confidence_pct`` stays anchored to
+        class 0 — the class whose meaning is fixed. The human-vs-machine
+        decision is the detector's reliable one (99.18 weighted F1), and
+        because the binary setup already folds refined code into class 1, no
+        confusion between kinds of AI involvement can move this number.
         """
         return 1.0 - self.human_generated
 
     @property
     def predicted_label(self) -> DroidLabel:
         """The argmax class, retained for diagnostics rather than for scoring."""
-        ordered = [
-            self.human_generated,
-            self.machine_generated,
-            self.machine_refined,
-            self.machine_generated_adversarial,
-        ]
+        ordered = [self.human_generated, self.machine_generated]
         return DroidLabel(ordered.index(max(ordered)))
 
 

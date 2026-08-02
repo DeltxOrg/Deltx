@@ -17,13 +17,10 @@ TIMESTAMP = datetime(2026, 7, 30, tzinfo=UTC)
 
 
 def make_distribution(human: float) -> ClassDistribution:
-    """A distribution with the remaining mass split across the machine classes."""
-    rest = (1.0 - human) / 3
+    """A distribution with the remaining mass on the machine class."""
     return ClassDistribution(
         human_generated=human,
-        machine_generated=rest,
-        machine_refined=rest,
-        machine_generated_adversarial=rest,
+        machine_generated=1.0 - human,
     )
 
 
@@ -43,42 +40,32 @@ class TestDroidLabel:
         checkpoint pins this, so a regression here silently inverts scores."""
         assert DroidLabel.HUMAN_GENERATED == 0
         assert DroidLabel.MACHINE_GENERATED == 1
-        assert DroidLabel.MACHINE_REFINED == 2
-        assert DroidLabel.MACHINE_GENERATED_ADVERSARIAL == 3
-        assert len(DroidLabel) == 4
+        assert len(DroidLabel) == 2
 
 
 class TestClassDistribution:
     def test_rejects_unnormalised(self) -> None:
         with pytest.raises(ValidationError, match="sum to 1.0"):
-            ClassDistribution(
-                human_generated=0.9,
-                machine_generated=0.9,
-                machine_refined=0.0,
-                machine_generated_adversarial=0.0,
-            )
+            ClassDistribution(human_generated=0.9, machine_generated=0.9)
 
     def test_from_probabilities_maps_in_label_order(self) -> None:
-        dist = ClassDistribution.from_probabilities([0.1, 0.2, 0.3, 0.4])
-        assert dist.human_generated == 0.1
-        assert dist.machine_generated == 0.2
-        assert dist.machine_refined == 0.3
-        assert dist.machine_generated_adversarial == 0.4
+        dist = ClassDistribution.from_probabilities([0.3, 0.7])
+        assert dist.human_generated == 0.3
+        assert dist.machine_generated == 0.7
 
     def test_from_probabilities_rejects_wrong_arity(self) -> None:
-        with pytest.raises(ValueError, match="expected 4"):
-            ClassDistribution.from_probabilities([0.5, 0.5])
+        with pytest.raises(ValueError, match="expected 2"):
+            ClassDistribution.from_probabilities([0.2, 0.3, 0.3, 0.2])
 
-    def test_p_ai_collapses_all_three_machine_classes(self) -> None:
-        """Confusion among machine classes must not move the score."""
-        spread = ClassDistribution.from_probabilities([0.2, 0.3, 0.3, 0.2])
-        concentrated = ClassDistribution.from_probabilities([0.2, 0.8, 0.0, 0.0])
-        assert spread.p_ai == pytest.approx(0.8)
-        assert concentrated.p_ai == pytest.approx(0.8)
+    def test_p_ai_is_the_complement_of_class_zero(self) -> None:
+        """``ai_confidence_pct`` is anchored to class 0, not to the argmax."""
+        dist = ClassDistribution.from_probabilities([0.2, 0.8])
+        assert dist.p_ai == pytest.approx(0.8)
+        assert dist.p_ai == pytest.approx(dist.machine_generated)
 
     def test_predicted_label(self) -> None:
-        dist = ClassDistribution.from_probabilities([0.1, 0.2, 0.6, 0.1])
-        assert dist.predicted_label is DroidLabel.MACHINE_REFINED
+        dist = ClassDistribution.from_probabilities([0.4, 0.6])
+        assert dist.predicted_label is DroidLabel.MACHINE_GENERATED
 
     def test_is_frozen(self) -> None:
         dist = make_distribution(0.5)
