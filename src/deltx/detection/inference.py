@@ -1,72 +1,25 @@
-"""Production inference pipeline for AI authorship detection (Stage 2 entry point).
-
-This is the module the rest of Deltx calls. It ties the two halves of the
-detection stage together — the :class:`FeatureExtractionPipeline` (raw source →
-16-D vector) and the trained :class:`DetectionClassifier` (vector → AI
-probability) — and exposes them behind a small commit-oriented API::
-
-    detector = AIDetectionInference.from_config(config)
-    result = detector.analyze_commit(commit_files, commit_hash, timestamp)
-    result.ai_confidence_pct  # 0–100; becomes index [4] of the 15-D commit vector
-
-**Granularity.** A file is classified to a probability in ``[0, 1]``; a commit's
-``ai_confidence_pct`` is the LOC-weighted average of its files, scaled to
-``[0, 100]`` — the integration contract's file → commit aggregation.
-
-**"Assume human when in doubt."** A file whose features cannot be trusted — it did
-not parse, or a feature family raised — is *not* fed to the classifier, because a
-partially-zeroed vector would be classified against signals the model never
-trained on. Such a file is returned with ``ai_confidence=0.0`` and
-``is_parseable=False`` so it is excluded from the commit average entirely, rather
-than dragged toward a spurious "0.0 = human" reading. If *no* file in a commit is
-classifiable, the commit scores ``0.0``.
-
-Like the pipeline it wraps, this layer never lets one pathological file abort a
-run: :meth:`analyze_file` contains its own failures so a batch of commits always
-completes.
-"""
-
-from __future__ import annotations
+"""File- and commit-level inference: the module's public entry point."""
 
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-import numpy as np
-import numpy.typing as npt
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    TextColumn,
-    TimeRemainingColumn,
-)
-
 from deltx.common.config import DeltxConfig
-from deltx.detection.classifier import DetectionClassifier
-from deltx.detection.models import (
-    CommitAnalysisResult,
-    FeatureVector,
-    FileAnalysisResult,
+from deltx.common.constants import (
+    PYTHON_SUFFIX,
+    SKIPPED_DIR_PARTS,
+    SKIPPED_FILENAMES,
 )
-from deltx.detection.pipeline import FeatureExtractionPipeline
+from deltx.common.exceptions import DeltxError
+from deltx.detection.detector import DroidDetector
+from deltx.detection.models import CommitAnalysisResult, FileAnalysisResult
 
 logger = logging.getLogger(__name__)
 
-FloatArray = npt.NDArray[np.float64]
-
-# Files that are Python by name but carry no authorship signal worth scoring:
-# packaging boilerplate and pytest configuration are near-identical across
-# repositories, so including them would only add noise to the commit average.
-_SKIP_FILENAMES: frozenset[str] = frozenset({"setup.py", "conftest.py"})
-
-# Any path component equal to this marks compiled-cache output, never source.
-_PYCACHE_DIR = "__pycache__"
-
 
 class CommitRecord(TypedDict):
-    """One commit's inputs for :meth:`AIDetectionInference.analyze_commit_batch`."""
+    """One commit's inputs for batch analysis."""
 
     files: dict[Path, str]
     commit_hash: str
@@ -74,125 +27,102 @@ class CommitRecord(TypedDict):
     author: NotRequired[str | None]
 
 
-def _is_analyzable(path: Path) -> bool:
-    """Return True if ``path`` is a Python source file worth analyzing.
+def skip_reason(file_path: Path) -> str | None:
+    """Decide whether a path is outside the module's remit.
 
-    Excludes non-``.py`` files (``.pyc`` included, by suffix), the packaging and
-    test-config files in :data:`_SKIP_FILENAMES`, and anything under a
-    ``__pycache__`` directory.
+    Args:
+        file_path: Path to test.
+
+    Returns:
+        A reason string when the file should be skipped, else ``None``.
     """
-    if path.suffix != ".py":
-        return False
-    if path.name in _SKIP_FILENAMES:
-        return False
-    return _PYCACHE_DIR not in path.parts
+    if file_path.suffix != PYTHON_SUFFIX:
+        return "not a Python file"
+    if file_path.name in SKIPPED_FILENAMES:
+        return "packaging or test boilerplate"
+    if SKIPPED_DIR_PARTS.intersection(file_path.parts):
+        return "generated directory"
+    return None
 
 
-def _commit_progress() -> Progress:
-    """A rich progress bar sized for commit-oriented batch work (current/total)."""
-    return Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeRemainingColumn(),
+def count_lines_of_code(source: str) -> int:
+    """Count non-empty, non-comment-only lines.
+
+    This is the weight used for commit aggregation, so it measures authored
+    code rather than file size.
+
+    Args:
+        source: Python source text.
+
+    Returns:
+        The line count.
+    """
+    return sum(
+        1
+        for line in source.splitlines()
+        if (stripped := line.strip()) and not stripped.startswith("#")
     )
 
 
 class AIDetectionInference:
-    """Production inference pipeline for AI authorship detection.
+    """Scores files and commits, producing ``ai_confidence_pct``."""
 
-    This is the main entry point for the detection module.
-
-    Usage::
-
-        detector = AIDetectionInference.from_config(config)
-        result = detector.analyze_commit(commit_files, commit_hash, timestamp)
-        print(result.ai_confidence_pct)  # 0-100 scale
-    """
-
-    def __init__(
-        self,
-        pipeline: FeatureExtractionPipeline,
-        classifier: DetectionClassifier,
-    ) -> None:
-        """Initialise with pre-built components.
+    def __init__(self, detector: DroidDetector) -> None:
+        """Wrap a loaded detector.
 
         Args:
-            pipeline: Feature extractor producing 16-D vectors from source.
-            classifier: A *fitted* classifier; its ``predict_proba`` supplies the
-                per-file AI probability. Construction does not check fitness —
-                :meth:`from_config` guarantees it, and callers wiring components by
-                hand are expected to pass a trained classifier.
+            detector: The loaded DroidDetect wrapper.
         """
-        self.pipeline = pipeline
-        self.classifier = classifier
+        self.detector = detector
 
     @classmethod
-    def from_config(cls, config: DeltxConfig) -> AIDetectionInference:
-        """Build the pipeline and load the trained classifier from config paths.
+    def from_config(cls, config: DeltxConfig | None = None) -> "AIDetectionInference":
+        """Load the detector and build the inference facade.
 
         Args:
-            config: Global configuration; supplies the language-model settings for
-                the pipeline and ``classifier_path`` for the saved model.
+            config: Active configuration. A default is built when omitted.
 
         Returns:
-            A ready-to-use inference pipeline.
-
-        Raises:
-            ModelNotLoadedError: If no classifier file exists at
-                ``config.classifier_path``.
+            A ready inference pipeline.
         """
-        pipeline = FeatureExtractionPipeline(config)
-        classifier = DetectionClassifier(config)
-        # Raises ModelNotLoadedError when the file is absent or malformed.
-        classifier.load()
-        logger.info(
-            "AI detection inference ready (model=%s, classifier=%s)",
-            config.model_name,
-            config.classifier_path,
-        )
-        return cls(pipeline, classifier)
+        return cls(DroidDetector.from_config(config or DeltxConfig()))
 
-    def analyze_file(
-        self, source_code: str, file_path: Path
-    ) -> FileAnalysisResult:
-        """Analyze a single Python file.
+    def analyze_file(self, source_code: str, file_path: Path) -> FileAnalysisResult:
+        """Score one file. Never raises.
 
-        Extracts the feature vector, and — only if extraction was clean — runs the
-        classifier to populate ``ai_confidence``. If feature extraction fails (the
-        file did not parse, or a feature family raised), the file is treated as
-        unclassifiable: the result carries ``is_parseable=False`` and
-        ``ai_confidence=0.0`` (assume human when we cannot classify), which also
-        excludes it from any commit-level average.
+        A file that cannot be scored is returned unscored rather than as a
+        fabricated 0.0, so commit aggregation can exclude it instead of
+        diluting the average.
 
         Args:
-            source_code: Raw Python source of one file.
-            file_path: Path the source came from (reporting only).
+            source_code: The file's contents.
+            file_path: Its path, used for skip rules and reporting.
 
         Returns:
-            A :class:`FileAnalysisResult` with ``ai_confidence`` in ``[0, 1]`` for
-            a classified file, or ``0.0`` for an unclassifiable one.
+            The per-file result.
         """
+        reason = skip_reason(file_path)
+        if reason is not None:
+            return FileAnalysisResult.unscored(file_path, reason)
+
+        lines_of_code = count_lines_of_code(source_code)
+        if lines_of_code == 0:
+            return FileAnalysisResult.unscored(file_path, "no code lines")
+
         try:
-            result = self.pipeline.extract_file_features(source_code, file_path)
-        except Exception as exc:  # noqa: BLE001 - one file must not sink the run
-            logger.warning("Feature extraction crashed for %s: %s", file_path, exc)
-            return self._unclassifiable(file_path, f"extraction error: {exc}")
+            scored = self.detector.score_source(source_code)
+        except DeltxError as exc:
+            logger.warning("could not score %s: %s", file_path, exc)
+            return FileAnalysisResult.unscored(file_path, str(exc), lines_of_code)
 
-        # A partial vector (bad parse, or a family that raised) is worse than no
-        # classification: the model never saw such rows, so we do not guess.
-        if not result.is_parseable or result.error_message is not None:
-            logger.debug(
-                "Not classifying %s (%s); assuming human",
-                file_path,
-                result.error_message or "source did not parse",
-            )
-            return result.model_copy(
-                update={"ai_confidence": 0.0, "is_parseable": False}
-            )
-
-        confidence = self._classify(result.feature_vector)
-        return result.model_copy(update={"ai_confidence": confidence})
+        return FileAnalysisResult(
+            file_path=file_path,
+            ai_confidence=scored.distribution.p_ai,
+            distribution=scored.distribution,
+            lines_of_code=lines_of_code,
+            token_count=scored.token_count,
+            chunk_count=scored.chunk_count,
+        )
 
     def analyze_commit(
         self,
@@ -201,111 +131,52 @@ class AIDetectionInference:
         timestamp: datetime,
         author: str | None = None,
     ) -> CommitAnalysisResult:
-        """Analyze all modified Python files in a commit.
-
-        Non-Python and boilerplate files (see :func:`_is_analyzable`) are skipped
-        before analysis. The commit's ``ai_confidence_pct`` is the LOC-weighted
-        average over classifiable files — parseable, with ``lines_of_code > 0`` —
-        scaled to ``[0, 100]``. A commit with nothing classifiable scores ``0.0``.
+        """Score every Python file in a commit and aggregate to one score.
 
         Args:
-            files: ``{file_path: source_code}`` for the files touched by the commit.
-            commit_hash: The commit's hash (reporting only).
-            timestamp: The commit's timestamp.
-            author: Optional commit author, carried onto the result.
+            files: Mapping of path to file contents for the commit.
+            commit_hash: Identifying hash.
+            timestamp: Commit timestamp.
+            author: Commit author, if known.
 
         Returns:
-            A :class:`CommitAnalysisResult` holding the commit score and every
-            file-level result (including skipped-analysis and unclassifiable ones).
+            The commit result, carrying ``ai_confidence_pct``.
         """
-        file_results: list[FileAnalysisResult] = []
-        skipped = 0
-        for file_path, source_code in files.items():
-            if not _is_analyzable(file_path):
-                logger.debug("Skipping non-analyzable file %s", file_path)
-                skipped += 1
-                continue
-            file_results.append(self.analyze_file(source_code, file_path))
-
-        classifiable = [
-            result
-            for result in file_results
-            if result.is_parseable and result.lines_of_code > 0
+        results = [
+            self.analyze_file(source, path) for path, source in sorted(files.items())
         ]
-        ai_confidence_pct = (
-            CommitAnalysisResult.aggregate(classifiable) if classifiable else 0.0
-        )
-
-        logger.info(
-            "Commit %s: %d files analyzed, ai_confidence=%.1f%%",
-            commit_hash[:8],
-            len(file_results),
-            ai_confidence_pct,
-        )
-        return CommitAnalysisResult(
+        return CommitAnalysisResult.aggregate(
             commit_hash=commit_hash,
             timestamp=timestamp,
+            file_results=results,
             author=author,
-            ai_confidence_pct=ai_confidence_pct,
-            file_results=file_results,
-            total_files_analyzed=len(file_results),
-            total_files_skipped=skipped,
         )
 
     def analyze_commit_batch(
-        self,
-        commits: list[CommitRecord],
-        progress: bool = True,
+        self, commits: list[CommitRecord]
     ) -> list[CommitAnalysisResult]:
-        """Batch-analyze multiple commits, optionally with a progress bar.
+        """Score a sequence of commits in order.
 
         Args:
-            commits: Each record carries ``files``, ``commit_hash``, ``timestamp``
-                and an optional ``author`` — the arguments of :meth:`analyze_commit`.
-            progress: Whether to render a rich progress bar over the commits.
+            commits: Commit records to analyse.
 
         Returns:
-            One :class:`CommitAnalysisResult` per input commit, in the same order.
+            One result per input commit, in the same order.
         """
         results: list[CommitAnalysisResult] = []
-        if progress and commits:
-            with _commit_progress() as bar:
-                task = bar.add_task("Analyzing commits", total=len(commits))
-                for commit in commits:
-                    results.append(self._analyze_record(commit))
-                    bar.advance(task)
-        else:
-            for commit in commits:
-                results.append(self._analyze_record(commit))
+        for index, commit in enumerate(commits, start=1):
+            logger.info(
+                "analysing commit %d/%d (%s)",
+                index,
+                len(commits),
+                commit["commit_hash"][:8],
+            )
+            results.append(
+                self.analyze_commit(
+                    files=commit["files"],
+                    commit_hash=commit["commit_hash"],
+                    timestamp=commit["timestamp"],
+                    author=commit.get("author"),
+                )
+            )
         return results
-
-    def _analyze_record(self, commit: CommitRecord) -> CommitAnalysisResult:
-        """Unpack one :class:`CommitRecord` and analyze it."""
-        return self.analyze_commit(
-            files=commit["files"],
-            commit_hash=commit["commit_hash"],
-            timestamp=commit["timestamp"],
-            author=commit.get("author"),
-        )
-
-    def _classify(self, feature_vector: FeatureVector) -> float:
-        """Run the classifier on one feature vector, returning P(AI) in ``[0, 1]``."""
-        matrix = feature_vector.to_array().reshape(1, -1)
-        proba = self.classifier.predict_proba(matrix)
-        return float(np.asarray(proba, dtype=np.float64).reshape(-1)[0])
-
-    @staticmethod
-    def _unclassifiable(file_path: Path, error_message: str) -> FileAnalysisResult:
-        """Build a zeroed, unparseable result for a file that yielded nothing."""
-        zeros = dict.fromkeys(FeatureVector.feature_names(), 0.0)
-        return FileAnalysisResult(
-            file_path=file_path,
-            feature_vector=FeatureVector(**zeros),
-            ai_confidence=0.0,
-            lines_of_code=0,
-            is_parseable=False,
-            error_message=error_message,
-        )
-
-
-__all__ = ["AIDetectionInference", "CommitRecord"]

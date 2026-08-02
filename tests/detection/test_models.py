@@ -1,89 +1,153 @@
-"""Tests for detection module data models."""
+"""Tests for the detection data models, including commit aggregation."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from deltx.detection.models import (
+    ClassDistribution,
     CommitAnalysisResult,
-    FeatureVector,
+    DroidLabel,
     FileAnalysisResult,
 )
 
-
-def _make_feature_vector(**overrides: float) -> FeatureVector:
-    defaults = {name: float(i) for i, name in enumerate(FeatureVector.feature_names())}
-    defaults.update(overrides)
-    return FeatureVector(**defaults)
+TIMESTAMP = datetime(2026, 7, 30, tzinfo=UTC)
 
 
-def _make_file_result(
-    confidence: float, loc: int, path: str = "test.py"
-) -> FileAnalysisResult:
+def make_distribution(human: float) -> ClassDistribution:
+    """A distribution with the remaining mass on the machine class."""
+    return ClassDistribution(
+        human_generated=human,
+        machine_generated=1.0 - human,
+    )
+
+
+def scored(path: str, confidence: float, loc: int) -> FileAnalysisResult:
+    """A scored file result."""
     return FileAnalysisResult(
         file_path=Path(path),
-        feature_vector=_make_feature_vector(),
         ai_confidence=confidence,
+        distribution=make_distribution(1.0 - confidence),
         lines_of_code=loc,
     )
 
 
-class TestFeatureVector:
-    def test_to_array_shape(self) -> None:
-        fv = _make_feature_vector()
-        arr = fv.to_array()
-        assert arr.shape == (16,)
-        assert arr.dtype == np.float64
-
-    def test_to_array_order(self) -> None:
-        fv = _make_feature_vector()
-        arr = fv.to_array()
-        for i, name in enumerate(FeatureVector.feature_names()):
-            assert arr[i] == getattr(fv, name)
-
-    def test_feature_names_count(self) -> None:
-        names = FeatureVector.feature_names()
-        assert len(names) == 16
-
-    def test_feature_names_order(self) -> None:
-        names = FeatureVector.feature_names()
-        for i, name in enumerate(names, start=1):
-            assert name.startswith(f"f{i}_")
+class TestDroidLabel:
+    def test_index_order_is_pinned(self) -> None:
+        """Verified against DroidCollection ground truth; nothing in the
+        checkpoint pins this, so a regression here silently inverts scores."""
+        assert DroidLabel.HUMAN_GENERATED == 0
+        assert DroidLabel.MACHINE_GENERATED == 1
+        assert len(DroidLabel) == 2
 
 
-class TestCommitAnalysisResult:
-    def test_aggregate_loc_weighted(self) -> None:
-        file_a = _make_file_result(confidence=0.8, loc=100)
-        file_b = _make_file_result(confidence=0.2, loc=300)
-        result = CommitAnalysisResult.aggregate([file_a, file_b])
-        assert result == pytest.approx(35.0)
+class TestClassDistribution:
+    def test_rejects_unnormalised(self) -> None:
+        with pytest.raises(ValidationError, match="sum to 1.0"):
+            ClassDistribution(human_generated=0.9, machine_generated=0.9)
 
-    def test_aggregate_empty_raises(self) -> None:
-        with pytest.raises(ValueError, match="empty"):
-            CommitAnalysisResult.aggregate([])
+    def test_from_probabilities_maps_in_label_order(self) -> None:
+        dist = ClassDistribution.from_probabilities([0.3, 0.7])
+        assert dist.human_generated == 0.3
+        assert dist.machine_generated == 0.7
 
-    def test_aggregate_zero_loc_raises(self) -> None:
-        file_a = _make_file_result(confidence=0.5, loc=0)
-        with pytest.raises(ValueError, match="zero"):
-            CommitAnalysisResult.aggregate([file_a])
+    def test_from_probabilities_rejects_wrong_arity(self) -> None:
+        with pytest.raises(ValueError, match="expected 2"):
+            ClassDistribution.from_probabilities([0.2, 0.3, 0.3, 0.2])
+
+    def test_p_ai_is_the_complement_of_class_zero(self) -> None:
+        """``ai_confidence_pct`` is anchored to class 0, not to the argmax."""
+        dist = ClassDistribution.from_probabilities([0.2, 0.8])
+        assert dist.p_ai == pytest.approx(0.8)
+        assert dist.p_ai == pytest.approx(dist.machine_generated)
+
+    def test_predicted_label(self) -> None:
+        dist = ClassDistribution.from_probabilities([0.4, 0.6])
+        assert dist.predicted_label is DroidLabel.MACHINE_GENERATED
+
+    def test_is_frozen(self) -> None:
+        dist = make_distribution(0.5)
+        with pytest.raises(ValidationError):
+            dist.human_generated = 0.9
 
 
 class TestFileAnalysisResult:
-    def test_unparseable_with_error(self) -> None:
-        result = FileAnalysisResult(
-            file_path=Path("broken.py"),
-            feature_vector=_make_feature_vector(),
-            ai_confidence=0.0,
-            lines_of_code=0,
-            is_parseable=False,
-            error_message="SyntaxError at line 42",
-        )
-        assert result.is_parseable is False
-        assert result.error_message == "SyntaxError at line 42"
+    def test_unscored_marks_and_explains(self) -> None:
+        result = FileAnalysisResult.unscored(Path("a.txt"), "not a Python file")
+        assert result.is_scored is False
+        assert result.ai_confidence == 0.0
+        assert result.chunk_count == 0
+        assert result.error_message == "not a Python file"
 
-    def test_parseable_default(self) -> None:
-        result = _make_file_result(confidence=0.5, loc=10)
-        assert result.is_parseable is True
-        assert result.error_message is None
+    def test_confidence_must_be_a_probability(self) -> None:
+        with pytest.raises(ValidationError):
+            FileAnalysisResult(
+                file_path=Path("a.py"), ai_confidence=1.5, lines_of_code=1
+            )
+
+
+class TestCommitAggregation:
+    def test_weights_by_lines_of_code(self) -> None:
+        """A large confident file must dominate a small one."""
+        result = CommitAnalysisResult.aggregate(
+            commit_hash="abc",
+            timestamp=TIMESTAMP,
+            file_results=[scored("big.py", 1.0, 900), scored("small.py", 0.0, 100)],
+        )
+        assert result.ai_confidence_pct == pytest.approx(90.0)
+        assert result.files_analyzed == 2
+
+    def test_unscored_files_are_excluded_not_averaged_in(self) -> None:
+        """An unscored file must not drag the average toward zero."""
+        result = CommitAnalysisResult.aggregate(
+            commit_hash="abc",
+            timestamp=TIMESTAMP,
+            file_results=[
+                scored("a.py", 1.0, 10),
+                FileAnalysisResult.unscored(Path("b.txt"), "not Python"),
+            ],
+        )
+        assert result.ai_confidence_pct == pytest.approx(100.0)
+        assert result.files_analyzed == 1
+        assert result.files_skipped == 1
+
+    def test_commit_with_nothing_scorable_is_zero(self) -> None:
+        """Assume human when in doubt."""
+        result = CommitAnalysisResult.aggregate(
+            commit_hash="abc",
+            timestamp=TIMESTAMP,
+            file_results=[FileAnalysisResult.unscored(Path("a.txt"), "not Python")],
+        )
+        assert result.ai_confidence_pct == 0.0
+        assert result.files_analyzed == 0
+
+    def test_empty_commit_is_zero(self) -> None:
+        result = CommitAnalysisResult.aggregate("abc", TIMESTAMP, [])
+        assert result.ai_confidence_pct == 0.0
+
+    def test_zero_loc_files_fall_back_to_unweighted_mean(self) -> None:
+        """Total weight of zero must not divide by zero."""
+        result = CommitAnalysisResult.aggregate(
+            commit_hash="abc",
+            timestamp=TIMESTAMP,
+            file_results=[scored("a.py", 1.0, 0), scored("b.py", 0.0, 0)],
+        )
+        assert result.ai_confidence_pct == pytest.approx(50.0)
+
+    def test_skipped_count_includes_pre_scoring_skips(self) -> None:
+        result = CommitAnalysisResult.aggregate(
+            commit_hash="abc",
+            timestamp=TIMESTAMP,
+            file_results=[scored("a.py", 0.5, 10)],
+            files_skipped=3,
+        )
+        assert result.files_skipped == 3
+
+    def test_output_is_a_percentage(self) -> None:
+        result = CommitAnalysisResult.aggregate(
+            "abc", TIMESTAMP, [scored("a.py", 0.42, 10)]
+        )
+        assert result.ai_confidence_pct == pytest.approx(42.0)
+        assert 0.0 <= result.ai_confidence_pct <= 100.0

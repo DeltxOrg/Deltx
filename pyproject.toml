@@ -9,10 +9,10 @@ packages = [{include = "deltx", from = "src"}]
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = "^2.3"
-transformers = "^4.40"
-xgboost = "^2.0"
+# Floor, not cap: 4.48 is the first release with ModernBERT support, which the
+# DroidDetect-Base backbone requires.
+transformers = ">=4.48"
 scikit-learn = "^1.4"
-shap = "^0.45"
 pydantic = "^2.7"
 pydantic-settings = "^2.3"
 pandas = "^2.2"
@@ -52,10 +52,6 @@ ignore = ["ANN101", "ANN102"]
 [tool.ruff.lint.per-file-ignores]
 # Tests rely on `assert`; the language-model import guard is intentionally broad.
 "tests/**" = ["S101"]
-# The classifier follows scikit-learn's ML naming convention (`X` for feature
-# matrices, `y` for labels), which N803/N806 would otherwise reject as non-snake.
-"src/deltx/detection/classifier.py" = ["N803", "N806"]
-"tests/detection/test_classifier.py" = ["N803", "N806"]
 
 [tool.ruff.lint.flake8-bugbear]
 # `Path(...)` is immutable, so it is safe as a default argument value.
@@ -92,15 +88,18 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-# xgboost, shap, and joblib ship no usable type information under strict mode;
-# treat them as untyped so their calls are not flagged as untyped-call errors.
-module = ["xgboost.*", "shap.*", "joblib.*"]
+# joblib ships no usable type information under strict mode; treat it as untyped
+# so its calls are not flagged as untyped-call errors.
+module = ["joblib.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=deltx --cov-report=term-missing -v"
+# `-m "not slow"` is what actually keeps the default suite offline; the marker
+# alone deselects nothing. Without it `pytest` downloads the 569 MB checkpoint.
+# Run the excluded tests with `pytest -m slow`.
+addopts = "--cov=deltx --cov-report=term-missing -v -m 'not slow'"
 markers = [
     "slow: tests that require the language model to be downloaded/cached",
     "integration: end-to-end tests exercising the full detection pipeline",

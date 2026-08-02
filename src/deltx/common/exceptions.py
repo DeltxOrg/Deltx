@@ -1,25 +1,34 @@
-"""Custom exception hierarchy for Deltx."""
+"""Custom exception hierarchy for Deltx.
+
+Every error raised deliberately by Deltx derives from :class:`DeltxError`, so
+callers can catch the whole family without resorting to a bare ``except``.
+"""
 
 
 class DeltxError(Exception):
-    """Base exception for all Deltx errors."""
+    """Base class for every Deltx-specific error."""
 
 
-class ParsingError(DeltxError):
-    """AST or tokenization failure."""
+class ConfigurationError(DeltxError):
+    """Raised when configuration values are missing, malformed, or inconsistent."""
 
 
-class FeatureExtractionError(DeltxError):
-    """Feature computation failure."""
+class CheckpointError(DeltxError):
+    """Raised when a model checkpoint cannot be fetched, read, or loaded.
+
+    Covers download failures, missing files, and — most importantly — state-dict
+    shape or key mismatches, which indicate the published checkpoint no longer
+    matches the architecture Deltx builds for it.
+    """
 
 
 class ModelNotLoadedError(DeltxError):
-    """Language model or classifier not initialized."""
+    """Raised when inference is attempted before the detector is loaded."""
 
 
-class DatasetError(DeltxError):
-    """Dataset download or processing failure."""
+class DetectionError(DeltxError):
+    """Raised when a single source file cannot be scored."""
 
 
-class ClassifierError(DeltxError):
-    """Classifier training, evaluation, or persistence failure."""
+class AggregationError(DeltxError):
+    """Raised when file-level results cannot be aggregated to a commit score."""
