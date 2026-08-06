@@ -157,6 +157,37 @@ history is therefore ~6–7 hours on CPU — the module is built to run in a GPU
 notebook for bulk work, with `--resume` making it safe to do so in chunks. The
 local CPU path is for development and small repositories.
 
+## Visualising results
+
+Point `deltx-visualize` at any results Parquet to render a set of static PNG
+charts beside it — a quick way to read the AI-authorship signal across a
+history without loading the table by hand.
+
+```bash
+python visualize_ai_confidence.py --input results/repo_ai_confidence.parquet
+# or, installed:
+poetry run deltx-visualize --input results/repo_ai_confidence.parquet
+```
+
+Five figures are written to `<input-dir>/<repo>_charts/` (override with
+`--output-dir`):
+
+| Figure | Shows |
+|--------|-------|
+| `*_timeline.png` | `ai_confidence_pct` per commit over history, a rolling-mean trend, the 50% decision line, and a base rug marking commits that changed no Python |
+| `*_distribution.png` | Histogram of scored commits, with median and threshold marks |
+| `*_by_author.png` | Mean AI-confidence per author (authors with `≥ --min-author-commits` scored commits) |
+| `*_activity.png` | Python files changed and LOC scored per commit, as stacked single-axis panels |
+| `*_dashboard.png` | The three headline charts combined, with a summary strip |
+
+The charts use a single-hue encoding (commit confidence is one blue series;
+magnitude is length/position; the 50% line is the one reserved status colour,
+always text-labelled), so nothing depends on distinguishing colours and the
+marks stay colour-blind safe. Options: `--rolling-window` (timeline trend, default
+20), `--bins` (histogram, default 20), `--min-author-commits` (default 3),
+`--dpi` (default 130). Unscored (`NaN`) commits are excluded from every average
+and shown only as the timeline rug, never counted as `0`.
+
 ## Testing
 
 ```bash
