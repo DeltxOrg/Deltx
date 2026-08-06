@@ -58,3 +58,6 @@ htmlcov/
 
 # ruff
 .ruff_cache/
+
+# results
+results/
