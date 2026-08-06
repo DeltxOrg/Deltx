@@ -72,3 +72,31 @@ SKIPPED_DIR_PARTS: Final[frozenset[str]] = frozenset({"__pycache__"})
 #: confidence AI. Index [4] of the 15-D commit vector.
 AI_CONFIDENCE_MIN: Final = 0.0
 AI_CONFIDENCE_MAX: Final = 100.0
+
+# --- Stage 1: history extraction ------------------------------------------
+
+#: Text encodings tried, in order, when decoding a file blob from a commit.
+#: UTF-8 is the norm for Python source; latin-1 is a total decoder that never
+#: raises, so it is the last resort before a blob is treated as binary.
+BLOB_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "latin-1")
+
+#: Commits processed between checkpoint writes to the output Parquet. Small
+#: enough that an interrupted run over a large repository loses little work,
+#: large enough that rewriting the whole frame is not the bottleneck. Resume
+#: continues from the last checkpointed commit.
+CHECKPOINT_INTERVAL: Final = 25
+
+#: Ordered column schema of the extraction output Parquet. The order is part of
+#: the contract downstream stages read against, so it is defined once here.
+EXTRACTION_COLUMNS: Final[tuple[str, ...]] = (
+    "repo_url",
+    "commit_hash",
+    "commit_timestamp",
+    "commit_author",
+    "commit_message",
+    "commit_index",
+    "files_changed_py",
+    "total_loc_scored",
+    "ai_confidence_pct",
+    "file_scores_json",
+)
