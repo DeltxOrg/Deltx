@@ -32,3 +32,15 @@ class DetectionError(DeltxError):
 
 class AggregationError(DeltxError):
     """Raised when file-level results cannot be aggregated to a commit score."""
+
+
+class ExtractionError(DeltxError):
+    """Raised when Stage 1 cannot extract commit history from a repository."""
+
+
+class GitError(ExtractionError):
+    """Raised when a Git command fails or a repository cannot be traversed.
+
+    Carries the failed command and its stderr so the caller can report exactly
+    which invocation broke rather than a generic non-zero exit.
+    """

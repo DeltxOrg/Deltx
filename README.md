@@ -8,7 +8,7 @@ Each commit is encoded as a 15-dimensional vector. Index `[4]` of that vector is
 
 | Stage | Module | Status |
 |-------|--------|--------|
-| 1. Data collection | `deltx.extraction` | planned |
+| 1. Data collection | `deltx.extraction` | **in progress** |
 | 2. AI authorship detection | `deltx.detection` | **in progress** |
 | 3. Squale quality aggregation | `deltx.scoring` | planned |
 | 4. PatchTST forecasting | `deltx.prediction` | planned |

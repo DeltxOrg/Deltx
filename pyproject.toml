@@ -27,6 +27,11 @@ pyarrow = ">=24.0"
 # Pulled in transitively by transformers, but dataset.py imports it directly.
 # A floor, not a cap: capping this pins transformers to an old release.
 huggingface-hub = ">=0.23"
+# Pulled in transitively by transformers, but the extraction CLI imports it
+# directly for the history-traversal progress bar. A floor, not a cap.
+tqdm = ">=4.65"
+# Static PNG rendering for the results-visualisation CLI (deltx-visualize).
+matplotlib = "^3.8"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2"
@@ -38,6 +43,10 @@ pre-commit = "^3.7"
 [tool.poetry.scripts]
 # Detection CLI; equivalent to `python -m deltx.detection.cli`.
 deltx-detect = "deltx.detection.cli:cli"
+# Stage 1 extraction CLI; equivalent to `python extract_ai_confidence.py`.
+deltx-extract = "deltx.extraction.cli:main"
+# Results visualisation; equivalent to `python visualize_ai_confidence.py`.
+deltx-visualize = "deltx.extraction.visualize:main"
 
 [tool.ruff]
 target-version = "py312"
@@ -51,7 +60,8 @@ ignore = ["ANN101", "ANN102"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests rely on `assert`; the language-model import guard is intentionally broad.
-"tests/**" = ["S101"]
+# S603/S607: extraction tests drive real `git` with literal, trusted arguments.
+"tests/**" = ["S101", "S603", "S607"]
 
 [tool.ruff.lint.flake8-bugbear]
 # `Path(...)` is immutable, so it is safe as a default argument value.
@@ -91,6 +101,20 @@ follow_imports = "skip"
 # joblib ships no usable type information under strict mode; treat it as untyped
 # so its calls are not flagged as untyped-call errors.
 module = ["joblib.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# tqdm ships no bundled stubs (types-tqdm is a separate, unbundled package);
+# the extraction CLI uses only its progress-bar wrapper.
+module = ["tqdm.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# matplotlib ships only partial type information; the visualisation module uses
+# the pyplot/Axes/Figure surface, which strict mode would otherwise flag.
+module = ["matplotlib.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
