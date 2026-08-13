@@ -64,12 +64,28 @@ print(result.file_results[0].distribution)  # the retained per-file distribution
 
 ### Score a commit
 
-```bash
-# From a SonarQube fixture file (offline)
-poetry run deltx-score --from-fixture path/to/issues.json --src ./checkout --commit SHA
+To score a commit, you need a running SonarQube instance. You can start the local SonarQube server and run a scan on a repository (e.g., Pyevolve) using Docker Compose:
 
-# Produces JSON:
-# { "score_maintainability": 85.2, "score_correctness": 91.0, ... }
+```bash
+# 1. Start the SonarQube server (runs on localhost:9000)
+docker compose up -d sonarqube
+
+# 2. Checkout the specific branch you want to score in your target repository
+cd /path/to/repo
+git checkout <branch-name>
+
+# 3. Run the SonarScanner on your repository
+# (Run this from the Deltx repository directory)
+docker compose run --rm sonar-scanner -Dsonar.projectKey=my-project
+```
+
+Then, you can use the scoring script to pull the issues and run the Deltx Squale aggregation:
+
+```bash
+# 4. Calculate and print the 4 ISO/IEC 25010 scores
+./.venv/bin/python scripts/score_local.py \
+    --project-key my-project \
+    --commit <branch-name>
 ```
 
 Or from Python:

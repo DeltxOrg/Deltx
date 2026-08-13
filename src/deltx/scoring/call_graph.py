@@ -16,6 +16,8 @@ from __future__ import annotations
 import ast
 import logging
 import subprocess
+import warnings
+import re
 from pathlib import Path
 
 import networkx as nx
@@ -68,12 +70,21 @@ def build_call_graph(source_dir: Path) -> nx.DiGraph:
         rel_str = str(py_file.relative_to(source_dir))
         try:
             source_code = py_file.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source_code, filename=str(py_file))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=SyntaxWarning)
+                tree = ast.parse(source_code, filename=str(py_file))
         except SyntaxError:
-            logger.warning("Syntax error in %s — skipping for call graph", rel_str)
-            continue
+            # Fallback for Python 2 code (like Pyevolve)
+            source_code = _clean_python2_syntax(source_code)
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=SyntaxWarning)
+                    tree = ast.parse(source_code, filename=str(py_file))
+            except SyntaxError:
+                logger.debug("Syntax error in %s — skipping for call graph", rel_str)
+                continue
         except Exception:  # noqa: BLE001
-            logger.warning("Failed to parse %s — skipping for call graph", rel_str)
+            logger.debug("Failed to parse %s — skipping for call graph", rel_str)
             continue
 
         # Extract imports.
@@ -217,6 +228,17 @@ def compute_all_churn(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _clean_python2_syntax(source: str) -> str:
+    """Best-effort regex substitution to fix common Python 2 syntax errors."""
+    # print "x" -> print("x")
+    source = re.sub(r'print\s+(?![\(\s])(.*?)(?=\n|$)', r'print(\1)', source)
+    # except Exception, e: -> except Exception as e:
+    source = re.sub(r'except\s+([A-Za-z0-9_\.]+)\s*,\s*([A-Za-z0-9_]+)\s*:', r'except \1 as \2:', source)
+    # raise Exception, "x" -> raise Exception("x")
+    source = re.sub(r'raise\s+([A-Za-z0-9_\.]+)\s*,\s*(.*?)(?=\n|$)', r'raise \1(\2)', source)
+    return source
 
 
 def _extract_import_targets(node: ast.AST) -> list[str]:

@@ -1,0 +1,22 @@
+version: "3.8"
+services:
+  sonarqube:
+    image: sonarqube:latest
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+
+  sonar-scanner:
+    image: sonarsource/sonar-scanner-cli:latest
+    container_name: sonar-scanner
+    profiles:
+      - scanner
+    environment:
+      - SONAR_HOST_URL=http://sonarqube:9000
+      - SONAR_TOKEN=${SONAR_TOKEN}
+    volumes:
+      - ${SCAN_DIR:-.}:/usr/src
+    depends_on:
+      - sonarqube
