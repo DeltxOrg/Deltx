@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import ast
 import logging
+import re
 import subprocess
 import warnings
-import re
 from pathlib import Path
 
 import networkx as nx
@@ -233,11 +233,19 @@ def compute_all_churn(
 def _clean_python2_syntax(source: str) -> str:
     """Best-effort regex substitution to fix common Python 2 syntax errors."""
     # print "x" -> print("x")
-    source = re.sub(r'print\s+(?![\(\s])(.*?)(?=\n|$)', r'print(\1)', source)
+    source = re.sub(r"print\s+(?![\(\s])(.*?)(?=\n|$)", r"print(\1)", source)
     # except Exception, e: -> except Exception as e:
-    source = re.sub(r'except\s+([A-Za-z0-9_\.]+)\s*,\s*([A-Za-z0-9_]+)\s*:', r'except \1 as \2:', source)
+    source = re.sub(
+        r"except\s+([A-Za-z0-9_\.]+)\s*,\s*([A-Za-z0-9_]+)\s*:",
+        r"except \1 as \2:",
+        source,
+    )
     # raise Exception, "x" -> raise Exception("x")
-    source = re.sub(r'raise\s+([A-Za-z0-9_\.]+)\s*,\s*(.*?)(?=\n|$)', r'raise \1(\2)', source)
+    source = re.sub(
+        r"raise\s+([A-Za-z0-9_\.]+)\s*,\s*(.*?)(?=\n|$)",
+        r"raise \1(\2)",
+        source,
+    )
     return source
 
 

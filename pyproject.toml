@@ -85,6 +85,18 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
+# torch might not be installed in the environment running mypy.
+module = ["torch.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# huggingface_hub might not be installed in the environment running mypy.
+module = ["huggingface_hub.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
 # scipy ships no type stubs (scipy-stubs is a separate, unbundled package).
 module = ["scipy.*"]
 ignore_missing_imports = true
