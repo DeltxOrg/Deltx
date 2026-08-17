@@ -398,7 +398,7 @@ def render_report(
     summary = summarise(frame, repo_label)
     written: list[Path] = []
 
-    with plt.rc_context(_RC):
+    with plt.rc_context(_RC):  # type: ignore[arg-type, unused-ignore]
         fig, ax = plt.subplots(figsize=(11, 5))
         _plot_timeline(ax, frame, rolling_window)
         written.append(

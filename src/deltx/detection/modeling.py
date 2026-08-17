@@ -38,7 +38,7 @@ from deltx.common.exceptions import CheckpointError
 logger = logging.getLogger(__name__)
 
 
-class TLModel(nn.Module):
+class TLModel(nn.Module):  # type: ignore[misc]
     """The DroidDetect classification head over a ModernBERT encoder.
 
     Mirrors the published ``TLModel`` for the forward path only. The training
