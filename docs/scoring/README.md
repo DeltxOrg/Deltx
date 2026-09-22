@@ -261,10 +261,10 @@ avg_pagerank_centrality,density_blocker_issues,density_critical_issues,
 density_major_issues,density_minor_issues,cognitive_complexity,duplication_density
 ```
 
-`repository` is the resolved absolute repository path, matching the sidecar.
-Using the full path keeps repositories with equal directory names distinct.
-Paths identify local checkouts: when combining exports from different machines
-or multiple clones, assign consistent repository IDs before grouping; also avoid
+`repository` contains only the repository directory name, for example `Pyevolve`.
+The metadata sidecar retains the resolved absolute path for provenance.
+Directory names are not globally unique: disambiguate unrelated repositories
+with the same name before grouping a combined training dataset. Also avoid
 placing related clones/forks with shared commits in different evaluation splits.
 No remote URL or credentials are copied from Git configuration.
 

@@ -76,7 +76,8 @@ poetry run deltx sonar down
 ```
 
 The dataset CSV starts with `repository,commit_hash`, followed by 15 ordered
-numeric features. The identifiers group repository histories and trace exact
+numeric features. `repository` contains the directory name only (e.g. `Pyevolve`).
+The identifiers group repository histories and trace exact
 commits; exclude them from transformer tensors. Detailed provenance is in
 `dataset.metadata.csv`. Default selection skips semantically unchanged Python
 checkpoints using AST comparison. `--no-filter` and `-no-filter` process every

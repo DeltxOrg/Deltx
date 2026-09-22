@@ -126,7 +126,7 @@ def test_selection_churn_and_untouched_worktree(
     with output.open() as file:
         exported = list(csv.DictReader(file))
     assert [row["commit_hash"] for row in exported] == [first, second, third]
-    assert {row["repository"] for row in exported} == {str(repo.root.resolve())}
+    assert {row["repository"] for row in exported} == {repo.root.name}
     assert [r.row.files_modified_count for r in rows] == [1, 1, 1]
     assert rows[1].row.loc_added == rows[1].row.loc_deleted == 1
     assert rows[2].row.loc_deleted == 3
@@ -194,7 +194,8 @@ def test_no_filter_and_exact_csv(
     assert len(metadata) == 2 and metadata[1]["row_index"] == "1"
     assert metadata[1]["ai_evidence"] == "no-scoreable-files"
     for exported, provenance in zip(data[1:], metadata, strict=True):
-        assert exported[:2] == [provenance["repository"], provenance["commit_sha"]]
+        assert provenance["repository"] == str(repo.root.resolve())
+        assert exported[:2] == [repo.root.name, provenance["commit_sha"]]
         assert len(exported[1]) == 40
     before = output.read_bytes()
     write_dataset(iter(rows), output)
@@ -204,10 +205,10 @@ def test_no_filter_and_exact_csv(
 def test_combined_export_keeps_repository_groups_and_commit_order(
     repo_builder: Builder, fake_inference: AIDetectionInference
 ) -> None:
-    # Equal basenames must not collapse unrelated histories into one series.
+    # Export only the names and quote punctuation correctly in CSV.
     repositories = [
         repo_builder('owner-a/project, "one"'),
-        repo_builder('owner-b/project, "one"'),
+        repo_builder('owner-b/project, "two"'),
     ]
     checkpoints: list[DatasetCheckpoint] = []
     identities: list[tuple[str, str]] = []
@@ -215,7 +216,7 @@ def test_combined_export_keeps_repository_groups_and_commit_order(
         for value in (1, 2):
             repository.write("app.py", f"x={value}\n")
             sha = repository.commit(f"value {value}")
-            identities.append((str(repository.root.resolve()), sha))
+            identities.append((repository.root.name, sha))
         checkpoints.extend(
             build_dataset(
                 repository.root, fake_inference, FakeAnalyzer(), ScoringConfig()

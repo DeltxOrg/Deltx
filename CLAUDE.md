@@ -341,9 +341,10 @@ include every checkpoint. The existing AI-only Parquet command remains available
 
 The exported CSV prepends `repository` and `commit_hash` to these 15 numeric
 features (17 columns total). These two strings identify sequences and snapshots;
-they are not transformer input channels. Repository identity is the resolved
-local path; the commit hash is the full Git object ID. The metadata sidecar
-retains the same identity under `repository` and `commit_sha`, plus detailed
+they are not transformer input channels. The exported repository identifier is
+the directory name only; the commit hash is the full Git object ID. The metadata
+sidecar retains the resolved full path under `repository` and hash under
+`commit_sha`, plus detailed
 commit/config/server provenance. Build windows within each repository and
 preserve its exported reverse-topological order; never sort by commit hash.
 See the guide for empty-state and missing-evidence policies and full formulas.

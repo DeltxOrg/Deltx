@@ -262,7 +262,7 @@ def write_dataset(checkpoints: Iterator[DatasetCheckpoint], output: Path) -> int
                     )
                 writer.writerow(
                     {
-                        "repository": repository,
+                        "repository": Path(repository).name,
                         "commit_hash": commit_hash,
                         **checkpoint.row.model_dump(),
                     }
