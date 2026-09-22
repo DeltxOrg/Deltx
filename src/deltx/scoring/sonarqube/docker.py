@@ -34,12 +34,12 @@ class DockerSonarQubeManager:
             status = {}
         if not reachable:
             if self.config.host_url.rstrip("/") not in {
-                "http://localhost:9000",
-                "http://127.0.0.1:9000",
+                "http://localhost:19000",
+                "http://127.0.0.1:19000",
             }:
                 raise ConfigurationError(
                     "start the configured local Sonar server; "
-                    "automatic stack uses port 9000"
+                    "automatic stack uses port 19000"
                 )
             run_process(["docker", "info"], error_type=SonarClientError)
             if not self.config.compose_file.is_file():

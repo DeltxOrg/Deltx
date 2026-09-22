@@ -66,7 +66,7 @@ print(result.file_results[0].distribution)  # the retained per-file distribution
 
 ```bash
 docker compose -f docker/sonarqube/compose.yaml up -d sonarqube
-# Complete SonarQube setup at http://localhost:9000 and set SONAR_TOKEN.
+# Complete SonarQube setup at http://localhost:19000 and set SONAR_TOKEN.
 poetry run deltx dataset /path/to/repository --output dataset.csv
 poetry run deltx dataset /path/to/repository --output all.csv --no-filter
 ```

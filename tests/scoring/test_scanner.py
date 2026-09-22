@@ -54,7 +54,7 @@ def test_existing_linux_loopback_server_uses_host_network(tmp_path: Path) -> Non
     manager = DockerSonarQubeManager(settings, SonarQubeClient(settings))
     scanner = DockerSonarScanner(settings, manager.client, manager)
     with patch("sys.platform", "linux"):
-        assert manager.scanner_url() == "http://localhost:9000"
+        assert manager.scanner_url() == "http://localhost:19000"
         command = scanner.command(tmp_path, tmp_path, "p", "sha")
         assert command[command.index("--network") + 1] == "host"
 

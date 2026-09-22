@@ -20,7 +20,9 @@ class SonarConfig(PrefixedSettings):
         allow_inf_nan=False,
         hide_input_in_errors=True,
     )
-    host_url: str = "http://localhost:9000"
+    # Avoid the common local PHP-FPM development port while keeping SonarQube
+    # itself on its standard container port.
+    host_url: str = "http://localhost:19000"
     token: SecretStr = Field(default_factory=lambda: SecretStr(""))
     scanner_image: str = "sonarsource/sonar-scanner-cli:5.0.1"
     expected_version: str = "9.9.8"

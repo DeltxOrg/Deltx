@@ -168,7 +168,7 @@ def test_refused_connection_and_redirect_are_distinct_errors() -> None:
         opened.return_value.open.side_effect = URLError(ConnectionRefusedError())
         with pytest.raises(SonarConnectionRefusedError):
             SonarQubeClient(SonarConfig()).status()
-    request = Request("http://localhost:9000/api/system/status")  # noqa: S310
+    request = Request("http://localhost:19000/api/system/status")  # noqa: S310
     with pytest.raises(SonarClientError, match="redirect"):
         _RejectRedirects().redirect_request(
             request, io.BytesIO(), 302, "Found", HTTPMessage(), "http://elsewhere/"

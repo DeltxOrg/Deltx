@@ -13,7 +13,7 @@ points. Dataset extraction owns the complete scan, context and scoring workflow.
 
 ```bash
 docker compose -f docker/sonarqube/compose.yaml up -d sonarqube
-# Open http://localhost:9000, complete initial setup, and create a user token
+# Open http://localhost:19000, complete initial setup, and create a user token
 # with Browse, Execute Analysis, and project-creation permission if needed.
 # Set SONAR_TOKEN in the environment or your untracked .env file.
 poetry run deltx dataset /path/to/python-repository --output dataset.csv
@@ -24,10 +24,10 @@ The pinned research stack is SonarQube **9.9.8-community** and SonarScanner
 **5.0.1** (Java 17 in the scanner image). This deliberately retains the
 INFO/MINOR/MAJOR/CRITICAL/BLOCKER severity contract. It is a historical research
 baseline, not a recommendation to expose this server publicly. Compose binds
-port 9000 to loopback and keeps data, extensions, logs and a persistent Docker
+host port 19000 to loopback and keeps data, extensions, logs and a persistent Docker
 network. The single-node embedded database is for local research.
 
-The manager probes `SONAR_HOST_URL` (default `http://localhost:9000`). A healthy
+The manager probes `SONAR_HOST_URL` (default `http://localhost:19000`). A healthy
 existing server is preserved. An existing starting server is awaited. If the
 default endpoint refuses connections, Deltx starts its Compose stack and waits
 for readiness. Timeouts, authentication errors and malformed responses fail
@@ -39,7 +39,7 @@ For a newly started stack, the scanner uses Docker DNS (`sonarqube:9000`). For
 an existing local server it uses host networking on Linux (including loopback-only
 servers) and `host.docker.internal` with the host-gateway mapping on Docker Desktop.
 `SONAR_SCANNER_HOST_URL` can override container routing; for example,
-use `http://host.docker.internal:9000` when a custom container setup needs it.
+use `http://host.docker.internal:19000` when a custom container setup needs it.
 `SONAR_COMPOSE_FILE` locates the Compose file for installations outside this
 checkout. `SONAR_EXPECTED_VERSION`, `SONAR_SCANNER_IMAGE`, request/startup/scan/
 Compute Engine timeouts, and polling interval are typed settings in
