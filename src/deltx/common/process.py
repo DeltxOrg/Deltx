@@ -17,8 +17,10 @@ def run_process(
 ) -> bytes:
     """Run literal arguments without a shell; never expose supplied secrets."""
     try:
-        result = subprocess.run(  # noqa: S603 - literal argv, never a shell
-            list(args),
+        # Callers provide command-specific literal argument vectors; shell=False
+        # is the safety boundary for this shared executor.
+        result = subprocess.run(
+            list(args),  # noqa: S603
             cwd=cwd,
             timeout=timeout,
             capture_output=True,

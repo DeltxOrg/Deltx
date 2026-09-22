@@ -33,7 +33,7 @@ def fingerprint(source: str) -> str:
             return "unparsed:" + source
     for node in ast.walk(tree):
         if isinstance(
-            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
         ):
             if (
                 node.body
