@@ -2,27 +2,29 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CommitDataVector(BaseModel):
     """The canonical 15-D vector representing a commit in the ML dataset."""
 
-    commit_size: float
-    file_count: float
-    complexity_delta: float
-    churn_rate: float
-    ai_confidence_pct: float
-    score_maintainability: float
-    score_correctness: float
-    score_security: float
-    score_efficiency: float
-    author_experience: float
-    time_since_last_commit: float
-    test_coverage_delta: float
-    dependency_count_delta: float
-    documentation_ratio: float
-    coupling_score: float
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    score_maintainability: float = Field(ge=0, le=100)
+    score_correctness: float = Field(ge=0, le=100)
+    score_security: float = Field(ge=0, le=100)
+    score_efficiency: float = Field(ge=0, le=100)
+    ai_confidence_pct: float = Field(ge=0, le=100)
+    loc_added: int = Field(ge=0)
+    loc_deleted: int = Field(ge=0)
+    files_modified_count: int = Field(ge=0)
+    avg_pagerank_centrality: float = Field(ge=0, le=1)
+    density_blocker_issues: float = Field(ge=0)
+    density_critical_issues: float = Field(ge=0)
+    density_major_issues: float = Field(ge=0)
+    density_minor_issues: float = Field(ge=0)
+    cognitive_complexity: float = Field(ge=0)
+    duplication_density: float = Field(ge=0, le=100)
 
     @classmethod
     def quality_score_fields(cls) -> list[str]:

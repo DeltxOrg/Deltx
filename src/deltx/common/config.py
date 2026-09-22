@@ -9,18 +9,19 @@ from typing import Literal
 
 import torch
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
 from deltx.common.constants import (
     DROIDDETECT_REPO,
     MAX_CONTEXT_TOKENS,
     MODERNBERT_REPO,
 )
+from deltx.common.settings import PrefixedSettings
 
 Device = Literal["auto", "cpu", "cuda"]
 
 
-class DeltxConfig(BaseSettings):
+class DeltxConfig(PrefixedSettings):
     """Configuration for the Deltx pipeline.
 
     Attributes:
@@ -53,6 +54,7 @@ class DeltxConfig(BaseSettings):
         env_prefix="DELTX_",
         env_file=".env",
         extra="forbid",
+        hide_input_in_errors=True,
         # `model_` is a Pydantic-protected namespace; `model_cache_dir` is ours.
         protected_namespaces=(),
     )
@@ -98,22 +100,3 @@ class DeltxConfig(BaseSettings):
     def chunk_overlap(self) -> int:
         """Tokens of context each chunk shares with the previous one."""
         return self.max_sequence_length - self.chunk_stride
-
-class ScoringConfig(BaseSettings):
-    """Configuration for the Squale quality scoring module."""
-
-    model_config = {
-        "env_prefix": "DELTX_SCORING_",
-        "env_file": ".env",
-        "extra": "ignore",
-    }
-
-    sonar_base_url: str = "http://localhost:9000"
-    sonar_token: str = ""
-    sonar_component_key: str = ""
-    normalizer_path: Path = Path("data/scoring/normalizer.json")
-    hyperparams_path: Path = Path("data/scoring/hyperparams.json")
-    churn_lookback_commits: int = 50
-    pagerank_alpha: float = 0.85
-    squale_lambda: float = 30.0
-

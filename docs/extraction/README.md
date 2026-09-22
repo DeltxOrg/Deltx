@@ -2,6 +2,10 @@
 
 ## Overview
 
+This page describes the AI-only Parquet workflow. For the 15-feature CSV with
+semantic filtering, historical context and SonarQube scores, see the
+[dataset and scoring guide](../scoring/README.md).
+
 The extraction module (Stage 1) turns a Git repository into the table the
 forecasting stage reads. It clones a repository, walks **every** commit on the
 primary branch oldest-first, scores the Python files each commit added or
@@ -14,8 +18,10 @@ Two invariants make the output usable downstream, and both are load-bearing:
 - **Continuous Ordinal Sampling.** No commit is skipped. A commit that touched
   no Python files still gets a row, so the series has no gaps for the
   time-series model to trip over.
-- **Chronological order.** Commits are emitted oldest-first (`commit_index` 0 is
-  the oldest), because the forecasting stage reads the series as a sequence.
+- **Ancestry order.** Commits are emitted in reverse topological order
+  (`commit_index` 0 is a root). All commits reachable from the selected branch
+  are included, so neighboring rows can come from sibling branches and author
+  timestamps need not increase. Select an ancestry path before forecasting.
 
 Stage 1 owns none of the scoring. Skip rules, chunking, per-file scoring, and
 the LOC-weighted aggregation into `ai_confidence_pct` all live in
@@ -96,8 +102,8 @@ column is portable across platforms.
 
 ## Git traversal
 
-Commits and their metadata come from a single `git log --reverse` pass
-(equivalent to `git rev-list --reverse`, but timestamp, author, subject, and
+Commits and their metadata come from a single `git log --reverse --topo-order` pass
+(equivalent to `git rev-list --reverse --topo-order`, but timestamp, author, subject, and
 parents come along for free). File contents are then read by blob address —
 `git show <sha>:<path>` — rather than by checking each commit out into the
 working tree. A thousand-commit history is a thousand checkouts of filesystem
@@ -129,7 +135,7 @@ identical content) is excluded; a rename or copy that also changed content
 | Binary / undecodable `.py` | Skipped with a warning; counted as changed, not scored |
 | Renamed only | Excluded; renamed **and** modified scores the new path |
 | Oversized file | Chunked on top-level AST boundaries by Stage 2, then scored — not truncated |
-| Encoding | UTF-8 first, latin-1 fallback, then skipped as binary |
+| Encoding | Python encoding declaration, then UTF-8/Latin-1 fallback; NUL-containing blobs are skipped as binary |
 
 `ai_confidence_pct` is `NaN` whenever nothing was scored — a commit with no
 changed `.py`, or one whose changed files were all empty, binary, or

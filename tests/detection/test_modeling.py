@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from torch import nn
+from transformers import AutoConfig, AutoTokenizer
 
 from deltx.common.config import DeltxConfig
 from deltx.common.constants import (
@@ -21,7 +22,7 @@ from deltx.detection import modeling
 from deltx.detection.modeling import TLModel
 
 
-class StubEncoder(nn.Module):
+class StubEncoder(nn.Module):  # type: ignore[misc]  # torch imports are untyped
     """A ModernBERT stand-in producing correctly shaped hidden states."""
 
     def forward(
@@ -100,9 +101,7 @@ class TestLoadDetector:
         weights = tmp_path / "pytorch_model.bin"
         torch.save(state, weights)
         monkeypatch.setattr(modeling, "hf_hub_download", lambda *a, **k: str(weights))
-        monkeypatch.setattr(
-            modeling.AutoTokenizer, "from_pretrained", lambda *a, **k: object()
-        )
+        monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **k: object())
         monkeypatch.setattr(modeling, "_build_encoder", lambda config: StubEncoder())
         return DeltxConfig(model_cache_dir=tmp_path, device="cpu")
 
@@ -158,9 +157,7 @@ class TestLoadDetector:
         torch.save({"classifier.weight": torch.zeros(4, 999)}, weights)
 
         monkeypatch.setattr(modeling, "hf_hub_download", lambda *a, **k: str(weights))
-        monkeypatch.setattr(
-            modeling.AutoTokenizer, "from_pretrained", lambda *a, **k: object()
-        )
+        monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **k: object())
         monkeypatch.setattr(modeling, "_build_encoder", lambda config: StubEncoder())
 
         config = DeltxConfig(model_cache_dir=tmp_path, device="cpu")
@@ -173,7 +170,7 @@ class TestLoadDetector:
         def boom(*args: object, **kwargs: object) -> object:
             raise OSError("no such repo")
 
-        monkeypatch.setattr(modeling.AutoConfig, "from_pretrained", boom)
+        monkeypatch.setattr(AutoConfig, "from_pretrained", boom)
         config = DeltxConfig(model_cache_dir=tmp_path, device="cpu")
         with pytest.raises(CheckpointError, match="could not build encoder"):
             modeling._build_encoder(config)

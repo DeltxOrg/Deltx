@@ -74,8 +74,25 @@ class TestDeltxConfig:
     def test_unknown_field_is_rejected(self) -> None:
         """`extra="forbid"` turns a typo'd setting into an error, not a silent no-op."""
         with pytest.raises(ValidationError):
-            DeltxConfig(not_a_real_setting=1)
+            DeltxConfig.model_validate({"not_a_real_setting": 1})
 
     def test_cache_dir_is_a_path(self, tmp_path: Path) -> None:
         config = DeltxConfig(model_cache_dir=tmp_path)
         assert isinstance(config.model_cache_dir, Path)
+
+
+def test_shared_dotenv_namespaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sonar credentials must not be parsed as detector configuration fields."""
+    from deltx.scoring.sonarqube.config import SonarConfig
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "SONAR_TOKEN=unit-test-token\nSCAN_DIR=/unused\nDELTX_DEVICE=cpu\n"
+    )
+    assert DeltxConfig().device == "cpu"
+    assert SonarConfig().token.get_secret_value() == "unit-test-token"
+    (tmp_path / ".env").write_text("DELTX_TYPO=1\n")
+    with pytest.raises(ValidationError):
+        DeltxConfig()

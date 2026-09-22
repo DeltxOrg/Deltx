@@ -1,0 +1,19 @@
+name: deltx-sonarqube
+services:
+  sonarqube:
+    image: sonarqube:9.9.8-community
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - sonar-data:/opt/sonarqube/data
+      - sonar-extensions:/opt/sonarqube/extensions
+      - sonar-logs:/opt/sonarqube/logs
+    networks:
+      - sonar
+networks:
+  sonar:
+    name: deltx-sonarqube
+volumes:
+  sonar-data:
+  sonar-extensions:
+  sonar-logs:

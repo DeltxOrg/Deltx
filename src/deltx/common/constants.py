@@ -60,6 +60,21 @@ EXPECTED_MODEL_TENSORS: Final = 138
 #: Deltx analyses Python only.
 PYTHON_SUFFIX: Final = ".py"
 
+# Shared Python snapshot scope; tests are deliberately included.
+PYTHON_GENERATED_DIRS: Final = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        "build",
+        "dist",
+        "site-packages",
+        "__pycache__",
+    }
+)
+
 #: Filenames skipped as packaging or test boilerplate rather than authored code.
 SKIPPED_FILENAMES: Final[frozenset[str]] = frozenset({"setup.py", "conftest.py"})
 

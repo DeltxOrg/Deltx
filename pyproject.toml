@@ -9,9 +9,9 @@ packages = [{include = "deltx", from = "src"}]
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = "^2.3"
-# Floor, not cap: 4.48 is the first release with ModernBERT support, which the
-# DroidDetect-Base backbone requires.
-transformers = ">=4.48"
+# ModernBERT requires >=4.48. Transformers 5 removes the tokenizer's
+# build_inputs_with_special_tokens API used by the published detector wrapper.
+transformers = ">=4.48,<5"
 scikit-learn = "^1.4"
 pydantic = "^2.7"
 pydantic-settings = "^2.3"
@@ -20,7 +20,6 @@ numpy = "^1.26"
 rich = "^13.7"
 click = "^8.1"
 scipy = "^1.13"
-requests = "^2.31"
 networkx = "^3.3"
 # DroidCollection ships as parquet; pandas needs an engine to read it.
 # Floor, not cap: pyarrow 16.x bundles DLLs that break `import torch` on Windows
@@ -44,14 +43,13 @@ pre-commit = "^3.7"
 hypothesis = "^6.100"
 
 [tool.poetry.scripts]
+deltx = "deltx.extraction.cli:cli"
 # Detection CLI; equivalent to `python -m deltx.detection.cli`.
 deltx-detect = "deltx.detection.cli:cli"
 # Stage 1 extraction CLI; equivalent to `python extract_ai_confidence.py`.
 deltx-extract = "deltx.extraction.cli:main"
 # Results visualisation; equivalent to `python visualize_ai_confidence.py`.
 deltx-visualize = "deltx.extraction.visualize:main"
-# Scoring CLI; computes the four ISO/IEC 25010 quality scores for a commit.
-deltx-score = "deltx.scoring.pipeline:main"
 
 [tool.ruff]
 target-version = "py312"

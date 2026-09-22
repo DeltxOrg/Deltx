@@ -190,5 +190,77 @@ def main(
         _remove_tree(workdir)
 
 
+@click.command("dataset")
+@click.argument(
+    "repository", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--output", required=True, type=click.Path(dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--no-filter",
+    "-no-filter",
+    is_flag=True,
+    help="Process every checkpoint; analysis remains Python-only.",
+)
+@click.option(
+    "--scoring-config", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option("--device", type=click.Choice(["auto", "cpu", "cuda"]), default="auto")
+def dataset(
+    repository: Path,
+    output: Path,
+    no_filter: bool,
+    scoring_config: Path | None,
+    device: str,
+) -> None:
+    """Build a chronological 15-feature CSV from a local Python Git repository."""
+    from pydantic import ValidationError
+
+    from deltx.common.exceptions import ConfigurationError
+    from deltx.extraction.dataset import build_dataset, write_dataset
+    from deltx.scoring.config import ScoringConfig
+    from deltx.scoring.sonarqube.config import SonarConfig
+    from deltx.scoring.sonarqube.scanner import SonarCheckpointAnalyzer
+
+    try:
+        config = (
+            ScoringConfig.model_validate_json(
+                scoring_config.read_text(encoding="utf-8")
+            )
+            if scoring_config
+            else ScoringConfig()
+        )
+        sonar_config = SonarConfig()
+        if not sonar_config.token.get_secret_value():
+            raise ConfigurationError(
+                "SONAR_TOKEN missing; create and export a Sonar analysis token"
+            )
+        inference = AIDetectionInference.from_config(DeltxConfig(device=device))
+        rows = build_dataset(
+            repository,
+            inference,
+            SonarCheckpointAnalyzer(sonar_config),
+            config,
+            filter_enabled=not no_filter,
+        )
+        count = write_dataset(rows, output)
+    except (DeltxError, ValidationError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(
+        f"Wrote {count} checkpoints to {output} "
+        f"and {output.with_suffix('.metadata.csv')}"
+    )
+
+
+@click.group()
+def cli() -> None:
+    """Deltx research extraction and dataset commands."""
+
+
+cli.add_command(main, "extract")
+cli.add_command(dataset)
+
+
 if __name__ == "__main__":
-    main()
+    cli()

@@ -12,8 +12,9 @@ The repository is read through Git plumbing (``git log``, ``git diff``,
 which also keeps a ``--resume`` run safe to interrupt at any point.
 """
 
+import io
 import logging
-import subprocess
+import tokenize
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,12 +22,9 @@ from pathlib import Path, PurePosixPath
 
 from deltx.common.constants import BLOB_ENCODINGS, PYTHON_SUFFIX
 from deltx.common.exceptions import GitError
+from deltx.common.process import run_process
 
 logger = logging.getLogger(__name__)
-
-#: Field separator for machine-parsed ``git log`` output. Chosen because it
-#: cannot appear in a commit hash, ISO date, author name, or subject line.
-_FIELD_SEP = "\x1f"
 
 #: Git status codes whose *destination* path carries added or modified content
 #: worth scoring. ``A`` added, ``M`` modified, ``T`` type-change (still a real
@@ -64,9 +62,7 @@ class CommitMeta:
         return self.parents[0] if self.parents else None
 
 
-def _run_git(
-    repo_dir: Path, args: list[str], *, binary: bool = False
-) -> bytes | str:
+def _run_git(repo_dir: Path, args: list[str], *, binary: bool = False) -> bytes | str:
     """Run a Git command in ``repo_dir`` and return its stdout.
 
     Args:
@@ -81,26 +77,10 @@ def _run_git(
     Raises:
         GitError: If Git exits non-zero or is not installed.
     """
-    try:
-        # Arguments are literal and never passed through a shell; "git" is
-        # resolved from PATH deliberately for cross-platform portability.
-        completed = subprocess.run(
-            ["git", *args],  # noqa: S603, S607
-            cwd=repo_dir,
-            capture_output=True,
-            check=True,
-        )
-    except FileNotFoundError as exc:
-        msg = "git executable not found on PATH"
-        raise GitError(msg) from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
-        msg = f"git {' '.join(args)!s} failed ({exc.returncode}): {stderr}"
-        raise GitError(msg) from exc
-
-    if binary:
-        return completed.stdout
-    return completed.stdout.decode("utf-8", errors="replace")
+    raw = run_process(
+        ["git", "--literal-pathspecs", *args], cwd=repo_dir, error_type=GitError
+    )
+    return raw if binary else raw.decode("utf-8", errors="surrogateescape")
 
 
 def clone_repository(repo_url: str, dest: Path) -> "GitRepository":
@@ -120,23 +100,13 @@ def clone_repository(repo_url: str, dest: Path) -> "GitRepository":
         GitError: If the clone fails.
     """
     logger.info("cloning %s into %s", repo_url, dest)
-    # `git clone` needs to run from a directory that exists; dest itself is
-    # created by clone. Run from the parent to avoid a chicken-and-egg cwd.
+    # Git creates the destination; its parent must already exist.
     dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        # Literal args, no shell; "git" resolved from PATH (see _run_git).
-        subprocess.run(
-            ["git", "clone", "--quiet", repo_url, str(dest)],  # noqa: S603, S607
-            capture_output=True,
-            check=True,
-        )
-    except FileNotFoundError as exc:
-        msg = "git executable not found on PATH"
-        raise GitError(msg) from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
-        msg = f"could not clone {repo_url}: {stderr}"
-        raise GitError(msg) from exc
+    run_process(
+        ["git", "clone", "--quiet", "--", repo_url, str(dest)],
+        timeout=600,
+        error_type=GitError,
+    )
     return GitRepository(dest)
 
 
@@ -177,9 +147,7 @@ class GitRepository:
     def _default_branch(self) -> str:
         """Return the remote's default branch, e.g. ``origin/main``."""
         try:
-            head = _run_git(
-                self.repo_dir, ["rev-parse", "--abbrev-ref", "origin/HEAD"]
-            )
+            head = _run_git(self.repo_dir, ["rev-parse", "--abbrev-ref", "origin/HEAD"])
             resolved = str(head).strip()
             if resolved and resolved != "origin/HEAD":
                 return resolved
@@ -199,9 +167,9 @@ class GitRepository:
         return True
 
     def iter_commits(self, branch: str) -> list[CommitMeta]:
-        """List every commit on ``branch``, oldest first, with metadata.
+        """List every reachable commit, ancestors before descendants, with metadata.
 
-        Equivalent to ``git rev-list --reverse`` but read in a single pass so
+        Equivalent to ``git rev-list --reverse --topo-order`` in one pass so
         each commit's timestamp, author, subject, and parents come for free.
         Merges are included; no commit is skipped.
 
@@ -209,27 +177,37 @@ class GitRepository:
             branch: A resolved ref (see :meth:`resolve_branch`).
 
         Returns:
-            Commit metadata in chronological order, index 0 being the oldest.
+            Commit metadata in reverse topological order, starting at a root.
         """
-        fmt = _FIELD_SEP.join(["%H", "%aI", "%an", "%s", "%P"])
+        fmt = "%x00".join(["%H", "%aI", "%an", "%s", "%P"])
         raw = str(
             _run_git(
                 self.repo_dir,
-                ["log", "--reverse", f"--pretty=format:{fmt}", branch],
+                [
+                    "log",
+                    "-z",
+                    "--reverse",
+                    "--topo-order",
+                    f"--format={fmt}",
+                    branch,
+                ],
             )
         )
+        # NUL cannot occur in Git's parsed identity/subject fields. In contrast,
+        # a subject can contain the old unit separator or Unicode line separators.
+        fields = raw.removesuffix("\0").split("\0") if raw else []
+        if len(fields) % 5:
+            raise GitError("malformed Git commit metadata")
         commits: list[CommitMeta] = []
-        for line in raw.splitlines():
-            if not line:
-                continue
-            sha, iso, author, subject, parents = line.split(_FIELD_SEP)
+        for index in range(0, len(fields), 5):
+            sha, iso, author, subject, parents = fields[index : index + 5]
             commits.append(
                 CommitMeta(
                     commit_hash=sha,
                     timestamp=datetime.fromisoformat(iso),
                     author=author,
                     message=subject,
-                    parents=tuple(parents.split()) if parents else (),
+                    parents=tuple(parents.split()),
                 )
             )
         return commits
@@ -270,9 +248,7 @@ class GitRepository:
             if line.endswith(PYTHON_SUFFIX)
         ]
 
-    def _diff_python_files(
-        self, parent: str, commit_hash: str
-    ) -> list[PurePosixPath]:
+    def _diff_python_files(self, parent: str, commit_hash: str) -> list[PurePosixPath]:
         """Added/modified ``.py`` files between ``parent`` and ``commit_hash``.
 
         Parses ``--name-status -z`` so rename and copy records (which carry two
@@ -322,9 +298,7 @@ class GitRepository:
             if code in _SCORED_STATUSES and path.endswith(PYTHON_SUFFIX):
                 yield PurePosixPath(path)
 
-    def read_file(
-        self, commit_hash: str, path: PurePosixPath
-    ) -> str | None:
+    def read_file(self, commit_hash: str, path: PurePosixPath) -> str | None:
         """Read and decode a file's contents at a given commit.
 
         Args:
@@ -344,6 +318,13 @@ class GitRepository:
         if b"\x00" in blob:
             logger.warning("skipping binary file %s at %s", path, commit_hash[:8])
             return None
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(blob).readline)
+            return blob.decode(encoding)
+        except (SyntaxError, LookupError, UnicodeError):
+            # Legacy files may omit the cookie or contain incompatible syntax.
+            # Preserve the established UTF-8/latin-1 fallback for those files.
+            pass
         for encoding in BLOB_ENCODINGS:
             try:
                 return blob.decode(encoding)

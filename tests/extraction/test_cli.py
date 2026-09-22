@@ -26,7 +26,7 @@ def patched_detector(
 ) -> None:
     """Replace the real detector loader with the fake inference facade."""
     monkeypatch.setattr(
-        cli.AIDetectionInference,
+        AIDetectionInference,
         "from_config",
         lambda config: fake_inference,
     )

@@ -19,17 +19,12 @@ src/deltx/
 │   ├── detector.py    # DroidDetect wrapper: source → class probabilities
 │   ├── inference.py   # File → commit-level inference pipeline
 │   └── cli.py         # Command-line interface (deltx-detect)
-├── extraction/        # Stage 1: Data Collection (future)
-├── scoring/           # Stage 3: Squale Quality Aggregation ✓
-│   ├── models.py      # Pydantic models: SonarIssue → CommitQualityVector
-│   ├── sonar_client.py # SonarQube Web API client + fixture mode
-│   ├── iso_mapping.py  # Rule → ISO/IEC 25010 dimension mapping
-│   ├── call_graph.py   # AST call graph + PageRank centrality + churn
-│   ├── weighting.py    # Dynamic issue weighting formula
-│   ├── scoring.py      # Penalty accumulation + Z-score normalizer
-│   ├── aggregation.py  # Squale exponential aggregation
-│   ├── pipeline.py     # score_commit() orchestrator + CLI
-│   └── tune.py         # Hyperparameter grid search (Spearman)
+├── extraction/        # Stage 1: Git/semantic filtering, topology, datasets ✓
+├── scoring/           # Stage 3: SQUALE-inspired quality aggregation ✓
+│   ├── models.py      # Issues, measures and four quality scores
+│   ├── config.py      # Typed, versioned research baseline
+│   ├── sonarqube/     # Docker manager, scanner and paginated HTTP client
+│   └── squale/        # Pure mapping, weighting and nonlinear aggregation
 ├── prediction/        # Stage 4: PatchTST Forecasting (future)
 └── interpretation/    # Stage 5: SHAP Explainability (future)
 ```
@@ -50,7 +45,8 @@ src/deltx/
 > Likewise `huggingface-hub` is floored, not capped: capping it pins `transformers`
 > to an old release.
 >
-> **transformers must be ≥ 4.48**, the first release with ModernBERT support.
+> **transformers must be ≥ 4.48 and < 5**: ModernBERT requires 4.48, while
+> version 5 removes the tokenizer API used by the detector wrapper.
 
 ## AI Detection Module — Complete Specification
 
@@ -290,90 +286,61 @@ ordinal rather than as a literal percentage likelihood.
 > GPU notebook, with the local CPU path reserved for development and small
 > repositories.
 
-## Quality Scoring Module — Complete Specification
+## Quality Scoring and Dataset Contract
 
-### Purpose
+The implemented contract is documented in [docs/scoring/README.md](docs/scoring/README.md).
+Use `deltx dataset REPOSITORY --output dataset.csv`; `--no-filter` / `-no-filter`
+include every checkpoint. The existing AI-only Parquet command remains available.
 
-Translates raw SonarQube rule violations at a given commit into four standardized ISO/IEC 25010 scores — `score_maintainability`, `score_correctness`, `score_security`, `score_efficiency` — on a 0–100 scale (100 = perfect). Uses dynamic issue weighting and Squale-inspired exponential penalty aggregation. Runs in parallel with Stage 2 (AI Detection) — no dependency on `ai_confidence_pct`.
+- Keep Docker/HTTP under `scoring/sonarqube`, pure calculations under
+  `scoring/squale`, and Git/filtering/topology/orchestration under `extraction`.
+- Invoke the existing `AIDetectionInference.analyze_commit` public API; its
+  confidence is already a percentage. Do not change the detection algorithm.
+- Use isolated Git snapshots, first-parent diffs, conservative semantic filtering,
+  and ancestral churn without future or sibling-branch information.
+- The graph is a static Python import graph, not a runtime call graph.
+- SonarQube 9.9.8-community and Scanner 5.0.1 are pinned research baselines.
+  Wait for Compute Engine SUCCESS before retrieving issues/measures.
+- Severity values are INFO=1, MINOR=2, MAJOR=3, CRITICAL=4, BLOCKER=5.
+- Dynamic risk is `M*S*[1+rho*(alpha*F'+beta*C'+gamma*CH')]`, where frequency
+  and historical volatility use bounded log normalization and centrality uses ECDF.
+- Individual mark is `3*(1-clip(W/(5*(1+rho)),0,1)^kappa)`.
+- Maintainability additionally uses `3/(1+(x/tau)^k)` for debt/KLOC,
+  cognitive complexity/KLOC and duplication percentage.
+- SQUALE is `-ln(weighted_mean(lambda^(-IM)))/ln(lambda)`, scaled by 100/3.
+  Baseline lambda=9 is configurable per dimension; no fitted normalizer or
+  claimed Python-optimal calibration exists.
+- Explicit Python rule mappings win over issue-type fallback. The initial
+  efficiency mapping is S2190, also mapped to correctness. Never infer it from
+  message keywords. Unknown mappings remain observable.
 
-### Mathematical Specification
+`CommitDataVector` has exactly these fields, in order:
 
-#### Per-issue dynamic weight
+| Index | Field |
+|-------|-------|
+| 0 | score_maintainability |
+| 1 | score_correctness |
+| 2 | score_security |
+| 3 | score_efficiency |
+| 4 | ai_confidence_pct |
+| 5 | loc_added |
+| 6 | loc_deleted |
+| 7 | files_modified_count |
+| 8 | avg_pagerank_centrality |
+| 9 | density_blocker_issues |
+| 10 | density_critical_issues |
+| 11 | density_major_issues |
+| 12 | density_minor_issues |
+| 13 | cognitive_complexity |
+| 14 | duplication_density |
 
-For issue `i` with severity `S_i`, local frequency `f_i`, centrality `C_i ∈ [0,1]`, and churn `K_i`:
-
-```
-w_i = S_i · (1 + α · ln(1 + f_i)) · (1 + β · C_i) · (1 + γ · K_i)
-```
-
-Default hyperparameters: `α=0.5, β=1.0, γ=0.3`. Tunable via `tune.py` grid search.
-
-#### Dimension penalty density
-
-```
-P_d = (Σ w_i for i ∈ dimension d) / LOC_active
-```
-
-#### Z-score normalization and inversion
-
-```
-z_d   = (P_d − μ_d) / σ_d        # μ_d, σ_d persisted from training
-score = 100 · (1 − clip(minmax(z_d), 0, 1))
-```
-
-#### Squale exponential aggregation (system-level)
-
-```
-Score_d = −100 · ln(mean(λ^(−s_m / 100))) / ln(λ)
-```
-
-Default `λ=30.0`. Dominated by the worst module: a single critical defect in a core routing module collapses the global score.
-
-### ISO/IEC 25010 Dimension Mapping
-
-| SonarQube Type      | Default Dimension | Override Rules                         |
-|---------------------|-------------------|----------------------------------------|
-| BUG                 | correctness       | —                                      |
-| VULNERABILITY       | security          | —                                      |
-| SECURITY_HOTSPOT    | security          | —                                      |
-| CODE_SMELL          | maintainability   | Efficiency/correctness rule overrides  |
-
-Severity scores: BLOCKER=10, CRITICAL=7, MAJOR=4, MINOR=2, INFO=1.
-
-### Integration Contract
-
-- **Input:** SonarQube issues + measures for a commit, source tree for call graph, Git repo for churn
-- **Output:** `CommitQualityVector` with four floats keyed as `score_maintainability`, `score_correctness`, `score_security`, `score_efficiency` — all in [0, 100]
-- **Granularity:** Per-file module scoring → Squale system-level aggregation
-- **CLI:** `deltx-score --from-fixture issues.json --src ./checkout --commit SHA`
-- **Downstream consumers:** PatchTST target channels (Stage 4), SHAP attribution (Stage 5)
-
-### 15-D Vector Field Mapping
-
-The canonical 15-D vector (`CommitDataVector` in `deltx.common.models`) carries:
-
-| Index | Field Name                | Source Module |
-|-------|---------------------------|---------------|
-| 0     | `commit_size`             | extraction    |
-| 1     | `file_count`              | extraction    |
-| 2     | `complexity_delta`        | extraction    |
-| 3     | `churn_rate`              | extraction    |
-| 4     | `ai_confidence_pct`       | detection     |
-| 5     | `score_maintainability`   | **scoring**   |
-| 6     | `score_correctness`       | **scoring**   |
-| 7     | `score_security`          | **scoring**   |
-| 8     | `score_efficiency`        | **scoring**   |
-| 9     | `author_experience`       | extraction    |
-| 10    | `time_since_last_commit`  | extraction    |
-| 11    | `test_coverage_delta`     | extraction    |
-| 12    | `dependency_count_delta`  | extraction    |
-| 13    | `documentation_ratio`     | extraction    |
-| 14    | `coupling_score`          | extraction    |
+Commit/config/server provenance belongs exclusively in the metadata sidecar.
+See the guide for empty-state and missing-evidence policies and full formulas.
 
 ## Coding Conventions
 
 - **Type annotations** on all function signatures and return types
-- **Pydantic v2** models for all structured data (use `model_validator` for complex validation)
+- **Pydantic v2** for validated configuration/schema and frozen dataclasses for domain records
 - **Google-style docstrings** on all public functions and classes
 - **Minimum 80% test coverage** per module
 - **`logging`** module with `rich` handler for structured output; never use `print()`
@@ -389,7 +356,7 @@ The canonical 15-D vector (`CommitDataVector` in `deltx.common.models`) carries:
 
 ## Key Terminology
 
-- **Continuous Ordinal Sampling:** Evaluating every sequential commit on the primary branch (never skip commits)
+- **Checkpoint selection:** Semantic Python changes by default; every traversed checkpoint with `--no-filter`
 - **15-D Vector:** The 15-dimensional feature vector per commit that feeds PatchTST
 - **Squale:** The quality model framework adapted for ISO/IEC 25010 scoring
 - **ai_confidence_pct:** The scalar output of the detection module (index [4] of the 15-D vector)
