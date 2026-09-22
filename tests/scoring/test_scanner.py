@@ -17,7 +17,12 @@ from deltx.common.exceptions import (
 )
 from deltx.common.process import run_process
 from deltx.extraction.cli import cli
-from deltx.scoring.models import SonarMeasures
+from deltx.scoring.models import (
+    CleanCodeAttribute,
+    RuleCatalog,
+    SonarMeasures,
+    SonarRuleMetadata,
+)
 from deltx.scoring.sonarqube.client import SonarQubeClient
 from deltx.scoring.sonarqube.config import SonarConfig
 from deltx.scoring.sonarqube.docker import DockerSonarQubeManager
@@ -203,7 +208,7 @@ def test_config_and_freshness() -> None:
 def test_analyzer_collects_only_after_scan_success(tmp_path: Path) -> None:
     analyzer = SonarCheckpointAnalyzer(config())
     measures = SonarMeasures(
-        ncloc=0, cognitive_complexity=0, duplicated_lines_density=0
+        ncloc=0, cognitive_complexity=0, duplicated_lines_density=0, sqale_index=0
     )
     events: list[str] = []
 
@@ -223,22 +228,37 @@ def test_analyzer_collects_only_after_scan_success(tmp_path: Path) -> None:
         ),
         patch.object(analyzer.client, "issues", side_effect=issues),
         patch.object(analyzer.client, "measures", return_value=measures),
-        patch.object(analyzer.client, "profile", return_value="[]"),
+        patch.object(analyzer.client, "profile", return_value='[{"key":"py"}]'),
+        patch.object(
+            analyzer.client,
+            "rule_catalog",
+            return_value=RuleCatalog(
+                {
+                    "python:efficient": SonarRuleMetadata(
+                        "python:efficient", CleanCodeAttribute.EFFICIENT
+                    ),
+                }
+            ),
+        ) as rules,
     ):
         result = analyzer.analyze(tmp_path, "p", "sha")
     assert events == ["scan completed", "issues"]
     assert result.analysis_id == "analysis" and result.sonar_version == "26.9.0"
+    assert result.rule_catalog is rules.return_value
 
 
-@pytest.mark.parametrize("drift", ["profile", "version"])
+@pytest.mark.parametrize("drift", ["profile", "version", "collection"])
 def test_analyzer_rejects_configuration_drift(tmp_path: Path, drift: str) -> None:
     analyzer = SonarCheckpointAnalyzer(config())
     measures = SonarMeasures(
-        ncloc=1, cognitive_complexity=0, duplicated_lines_density=0
+        ncloc=1, cognitive_complexity=0, duplicated_lines_density=0, sqale_index=0
     )
     versions = ["26.9.0", "26.9.1" if drift == "version" else "26.9.0"]
     profiles = [
         '[{"key":"py","rulesUpdatedAt":"before"}]',
+        '[{"key":"py","rulesUpdatedAt":"after"}]'
+        if drift == "collection"
+        else '[{"key":"py","rulesUpdatedAt":"before"}]',
         '[{"key":"py","rulesUpdatedAt":"after"}]'
         if drift == "profile"
         else '[{"key":"py","rulesUpdatedAt":"before"}]',
@@ -252,8 +272,20 @@ def test_analyzer_rejects_configuration_drift(tmp_path: Path, drift: str) -> Non
         patch.object(analyzer.client, "issues", return_value=()),
         patch.object(analyzer.client, "measures", return_value=measures),
         patch.object(analyzer.client, "profile", side_effect=profiles),
+        patch.object(
+            analyzer.client,
+            "rule_catalog",
+            return_value=RuleCatalog(
+                {
+                    "python:efficient": SonarRuleMetadata(
+                        "python:efficient", CleanCodeAttribute.EFFICIENT
+                    ),
+                }
+            ),
+        ),
     ):
-        analyzer.analyze(tmp_path, "p", "one")
+        if drift != "collection":
+            analyzer.analyze(tmp_path, "p", "one")
         with pytest.raises(ConfigurationError, match="changed during"):
             analyzer.analyze(tmp_path, "p", "two")
 

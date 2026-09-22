@@ -66,7 +66,7 @@ class MetricConfig(FrozenConfig):
 
 
 class RuleMapping(FrozenConfig):
-    """Explicit rule override; multiple dimensions may have M in (0, 1]."""
+    """Risk coefficients for mapped dimensions; these cannot invent mappings."""
 
     rule: str
     coefficients: Mapping[Dimension, float]
@@ -81,14 +81,9 @@ class RuleMapping(FrozenConfig):
 
 
 class ScoringConfig(FrozenConfig):
-    """All research hyperparameters, serializable as a single JSON document.
+    """Research hyperparameters; mappings come from Sonar impacts/rule metadata."""
 
-    The initial curated efficiency signal is Python S2190 (unbounded recursion,
-    wasting CPU/stack resources). It also retains its correctness influence.
-    Broader performance coverage requires reviewed rule overrides.
-    """
-
-    version: str = "PYTHON_RESEARCH_BASELINE_V2"
+    version: str = "PYTHON_RESEARCH_BASELINE_V3"
     dimensions: Mapping[Dimension, DimensionConfig] = Field(
         default_factory=lambda: {d: DimensionConfig() for d in Dimension}
     )
@@ -103,17 +98,8 @@ class ScoringConfig(FrozenConfig):
             IssueType.CODE_SMELL: Dimension.MAINTAINABILITY,
         }
     )
-    rule_overrides: tuple[RuleMapping, ...] = Field(
-        default_factory=lambda: (
-            RuleMapping(
-                rule="python:S2190",
-                coefficients={
-                    Dimension.CORRECTNESS: 1.0,
-                    Dimension.EFFICIENCY: 1.0,
-                },
-            ),
-        )
-    )
+    rule_overrides: tuple[RuleMapping, ...] = ()
+    maintainability_issue_omega: float = Field(default=1, gt=0)
     debt: MetricConfig = Field(default_factory=lambda: MetricConfig(tau=1000))
     complexity: MetricConfig = Field(default_factory=lambda: MetricConfig(tau=100))
     duplication: MetricConfig = Field(default_factory=lambda: MetricConfig(tau=5))
@@ -136,4 +122,8 @@ class ScoringConfig(FrozenConfig):
             raise ValueError("severity values must increase strictly up to BLOCKER=5")
         if len({r.rule for r in self.rule_overrides}) != len(self.rule_overrides):
             raise ValueError("duplicate rule overrides")
+        if Dimension.EFFICIENCY in self.fallback_mapping.values():
+            raise ValueError(
+                "Efficiency requires EFFICIENT rule metadata, not a type fallback"
+            )
         return self

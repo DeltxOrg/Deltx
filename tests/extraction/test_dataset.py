@@ -24,7 +24,13 @@ from deltx.extraction.git_history import GitRepository
 from deltx.extraction.semantics import meaningful_change
 from deltx.extraction.topology import dependency_pagerank, pagerank_percentiles
 from deltx.scoring.config import ScoringConfig
-from deltx.scoring.models import Analysis, SonarMeasures
+from deltx.scoring.models import (
+    Analysis,
+    CleanCodeAttribute,
+    RuleCatalog,
+    SonarMeasures,
+    SonarRuleMetadata,
+)
 
 from .conftest import GitRepoBuilder
 
@@ -57,6 +63,13 @@ class FakeAnalyzer:
             "test-profile",
             "5.0.1",
             "analysis",
+            rule_catalog=RuleCatalog(
+                {
+                    "python:efficient": SonarRuleMetadata(
+                        "python:efficient", CleanCodeAttribute.EFFICIENT
+                    ),
+                }
+            ),
         )
 
 

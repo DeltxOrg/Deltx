@@ -109,9 +109,18 @@ The API retrieves `ncloc`, `cognitive_complexity`, `duplicated_lines_density`,
 `software_quality_maintainability_remediation_effort` and
 `software_quality_maintainability_debt_ratio`. These populate the domain's
 `sqale_index` and `sqale_debt_ratio` fields; legacy measures are a fallback if
-MQR values are absent. Missing required measures on nonempty code
-fail. Missing debt is recorded as absent and contributes no debt synthetic mark.
+MQR values are absent. NCLOC, debt, cognitive complexity and duplication are
+required, including for empty snapshots. Explicit measured zero is valid;
+missing values fail instead of becoming zero. Only the unused debt ratio is optional.
 No Sonar A–E rating is used as a Deltx target.
+
+The client loads the active Python rules through paginated `api/rules/search`
+queries for the project's quality profile. It parses rule attributes into an
+immutable `RuleCatalog`, cached by profile identity and update timestamp for the
+analyzer's lifetime. No per-issue metadata requests occur. Profile identity is
+checked again after collection to reject changes while loading rules. Missing
+rule metadata, inconsistent counts, unfamiliar attributes and zero active
+`EFFICIENT` rules fail clearly. The active rule and efficiency-rule counts are logged.
 
 ## Separation and temporal policy
 
@@ -182,7 +191,7 @@ C'(f,t) = ECDF(PR(f,t))
 V(f,t) = sum(k=1..H) delta^(k-1) *
          (added(f,t-k) + deleted(f,t-k)) / max(previous_loc(f,t-k), 1)
 CH'(f,t) = ln(1 + V) / (1 + ln(1 + V))
-W(i,d,t) = M(i,d) * S(i) *
+W(i,d,t) = M(i,d) * S(i,d) *
            [1 + rho_d * (alpha_d*F' + beta_d*C' + gamma_d*CH')]
 IM(i,d) = 3 * [1 - clip(W / (5*(1+rho_d)), 0, 1)^kappa_d]
 metric_mark(x) = 3 / [1 + (x/tau)^k]
@@ -195,38 +204,57 @@ checkpoints, including filtered checkpoints. Renames preserve file identity;
 newly added files do not inherit unrelated deleted-file history. The current
 change and future/sibling commits cannot enter `V(f,t)`.
 
-The V2 baseline prefers MQR impacts even when legacy fields are also returned.
+The V3 baseline prefers MQR impacts even when legacy fields are also returned.
 MAINTAINABILITY→MAINTAINABILITY, RELIABILITY→CORRECTNESS and SECURITY→SECURITY.
 Each quality keeps its own impact severity; an issue can affect multiple scores.
+Repeated impacts for one dimension reduce to their strongest severity, independent
+of ordering, so one issue contributes at most once to each dimension.
 MQR INFO/LOW/MEDIUM/HIGH/BLOCKER normalize to the existing
 INFO/MINOR/MAJOR/CRITICAL/BLOCKER buckets (1/2/3/4/5). The four CSV density
 columns keep their names and count each issue once at its maximum impact.
-This mapping changes the scoring baseline; do not mix V1 and V2 rows as if
-they used the same targets.
+Unknown severities fail rather than receiving a default weight. Do not mix rows
+from different scoring baselines as if they used the same targets.
 
-Overrides map rule keys to one or more dimensions with coefficients in `(0,1]`;
-explicit overrides win over MQR mappings. An overridden dimension without a
-corresponding impact uses the issue's maximum severity. If impacts are absent,
-fallbacks are BUG→CORRECTNESS,
+`rule_overrides` can configure coefficients in `(0,1]` for dimensions already
+mapped from issue impacts and rule metadata. They cannot add dimensions or
+replace any modern impact. Defaults contain no rule-ID overrides. If impacts
+are absent, compatibility fallbacks are BUG→CORRECTNESS,
 VULNERABILITY/SECURITY_HOTSPOT→SECURITY, CODE_SMELL→MAINTAINABILITY.
-Unknown types without impacts or overrides are listed in metadata and logged.
+Unknown types without impacts or an efficiency classification are listed in
+metadata and logged.
 
-The initial curated efficiency override is `python:S2190` (unbounded recursion):
-it influences correctness and efficiency with M=1 each, accounting for wasted
-CPU/stack resources as well as failure. This is an explicit Deltx research
-mapping, not a Sonar efficiency classification. Broader performance/resource
-coverage needs review and calibration. Message keywords never determine mapping.
+Efficiency is an **additive** mapping, exclusively for rules whose authoritative
+`cleanCodeAttribute` is `EFFICIENT`. It uses the strongest severity among the
+issue's modern impacts, or its valid legacy severity when modern impacts are
+absent. It retains all other software-quality impacts. Rule IDs, keywords,
+tags, debt, complexity and duplication cannot identify efficiency findings.
+For example, `python:S2190` is `LOGICAL` in the current Python analyzer and thus
+does not receive an efficiency penalty. An active profile with efficient rules
+and no corresponding issue violations yields efficiency 100; a profile with
+no active efficient rules raises a configuration error.
+
+Efficiency is a **static-analysis-derived efficiency proxy**, not a runtime
+performance measurement. Correctness and security similarly score 100 when
+their configured rules report no violations.
 Only findings returned by the issues API enter scoring. Security findings with
 MQR impacts contribute normally. Separate hotspot review priorities are not
-converted into issue severities. More rules do not guarantee a lower score;
-efficiency still depends on the explicit performance-rule mapping.
+converted into issue severities.
 
-Maintainability adds marks for `sqale_index/ncloc*1000` (debt minutes/KLOC),
-`cognitive_complexity/ncloc*1000`, and duplication percentage, even with no smells.
-The one-line denominator applies when ncloc is zero. No issue/synthetic marks
-means score 100. Empty Python states are still scanned; absent empty-state metrics
-become zero, AI/churn/PageRank follow their documented rules, and empty-state
-quality scores are 100. These mean no measured findings, not assessed excellence.
+Maintainability first combines all MAINTAINABILITY issue marks using nonlinear
+SQUALE into one **0–3 issue-practice mark**, or 3 when no such issues exist.
+The final SQUALE aggregation combines exactly four practice marks:
+
+1. The issue-practice mark, weighted by `maintainability_issue_omega`.
+2. `metric_mark(sqale_index / max(ncloc, 1) * 1000)` for debt minutes/KLOC.
+3. `metric_mark(cognitive_complexity / max(ncloc, 1) * 1000)`.
+4. `metric_mark(duplicated_lines_density)` for the already normalized percentage.
+
+Each metric uses its own configured positive `omega`, `tau` and `k`. Duplication
+is not divided by NCLOC. Issue count affects frequency risk but cannot change
+the relative weights of the four outer practices. No maintenance issues alone
+does not imply a perfect score: high debt, complexity or duplication lowers it.
+Empty Python states are still scanned, but cannot be scored if Sonar omits any
+required measure. Missing data never earns a perfect mark.
 
 The weighted exponential mean penalizes low marks more than arithmetic averaging.
 It is not a hard worst-issue cap: an arbitrarily large population of better marks
@@ -236,9 +264,10 @@ values are rejected before writing CSV.
 
 ## Baseline configuration and output
 
-`PYTHON_RESEARCH_BASELINE_V2` uses equal alpha/beta/gamma=1/3, rho=1, kappa=1,
+`PYTHON_RESEARCH_BASELINE_V3` uses equal alpha/beta/gamma=1/3, rho=1, kappa=1,
 lambda=9 and omega=1 per dimension. Synthetic tau values are 1000 debt minutes/KLOC,
-100 cognitive complexity/KLOC and 5% duplication, with k=1 and omega=1. H=50,
+100 cognitive complexity/KLOC and 5% duplication, with k=1 and omega=1.
+`maintainability_issue_omega=1` weights the issue practice at the outer level. H=50,
 delta=0.9, PageRank damping=0.85, tolerance=1e-12 and max iterations=1000.
 These are provisional baselines, **not Python-optimized or validated thresholds**.
 
@@ -308,7 +337,7 @@ unless that output is explicitly selected for a new run.
 The separate `<name>.metadata.csv` records matching row index, commit SHA/time,
 first parent, traversal policy, repository and captured HEAD, filtering,
 server/profile/scanner and Python versions, scanner image ID, issue model
-(`MQR_PREFERRED_V1`), analysis ID, config version/full
+(`MQR_EFFICIENT_V2`), analysis ID, config version/full
 JSON/hash, AI evidence and unknown rules. Keep these fields outside the feature
 matrix. Both files are staged before publication; analysis failure preserves
 existing outputs. An ordinary publication error restores the previous pair;
@@ -344,6 +373,6 @@ not make datasets from different analyzer releases directly comparable.
 References: [SonarQube Web API](https://docs.sonarsource.com/sonarqube-community-build/extension-guide/web-api),
 [MQR modes and severities](https://docs.sonarsource.com/sonarqube-community-build/user-guide/code-metrics/changing-modes),
 [metric definitions](https://docs.sonarsource.com/sonarqube-community-build/user-guide/code-metrics/metrics-definition),
-[SonarSource Python S2190 announcement](https://community.sonarsource.com/t/python-analysis-detects-more-tricky-quality-issues-unused-assigned-variables-infinite-loops-ignored-parameters-initial-value-and-more/17146),
+[rule attributes and impacts](https://docs.sonarsource.com/sonarqube-community-build/quality-standards-administration/managing-rules/rules),
 [server image](https://hub.docker.com/_/sonarqube),
 [scanner image](https://hub.docker.com/r/sonarsource/sonar-scanner-cli).

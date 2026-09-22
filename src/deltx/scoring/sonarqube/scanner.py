@@ -185,9 +185,7 @@ class SonarCheckpointAnalyzer:
         analysis_id = self.scanner.scan(source, project_key, revision)
         self._verify_latest(project_key, analysis_id)
         issues = self.client.issues(project_key)
-        measures = self.client.measures(
-            project_key, empty=not any(source.rglob("*.py"))
-        )
+        measures = self.client.measures(project_key)
         profile = self.client.profile(project_key, empty=measures.ncloc == 0)
         if profile != "[]":
             previous = self.profiles.setdefault(project_key, profile)
@@ -196,6 +194,11 @@ class SonarCheckpointAnalyzer:
                     "Python quality profile changed during the dataset run; "
                     "restore a fixed profile and restart"
                 )
+        catalog = self.client.rule_catalog(profile)
+        for issue in issues:
+            catalog.get(issue.rule)
+        if self.client.profile(project_key, empty=measures.ncloc == 0) != profile:
+            raise ConfigurationError("Python quality profile changed during collection")
         self._verify_latest(project_key, analysis_id)
         return Analysis(
             issues,
@@ -205,4 +208,5 @@ class SonarCheckpointAnalyzer:
             self.scanner.version,
             analysis_id,
             self.scanner.image_id,
+            rule_catalog=catalog,
         )

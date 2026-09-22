@@ -306,18 +306,25 @@ include every checkpoint. The existing AI-only Parquet command remains available
   `deltx sonar up/down` derives Compose settings from it.
 - Prefer MQR impacts and their per-quality severities. Normalize
   INFO/LOW/MEDIUM/HIGH/BLOCKER to INFO/MINOR/MAJOR/CRITICAL/BLOCKER (1–5).
+  Map MAINTAINABILITY→MAINTAINABILITY, RELIABILITY→CORRECTNESS and SECURITY→SECURITY.
+  Deduplicate each issue's dimension impacts using maximum severity.
   Count each issue once at its maximum impact severity for CSV densities.
 - Dynamic risk is `M*S*[1+rho*(alpha*F'+beta*C'+gamma*CH')]`, where frequency
   and historical volatility use bounded log normalization and centrality uses ECDF.
 - Individual mark is `3*(1-clip(W/(5*(1+rho)),0,1)^kappa)`.
-- Maintainability additionally uses `3/(1+(x/tau)^k)` for debt/KLOC,
-  cognitive complexity/KLOC and duplication percentage.
+- Maintainability combines four practices through nonlinear SQUALE: its aggregated
+  issue mark, and `3/(1+(x/tau)^k)` for debt/KLOC, cognitive complexity/KLOC and
+  duplication percentage. All four have positive configurable weights. Required
+  missing metrics fail, including for empty snapshots; never invent measured zeros.
 - SQUALE is `-ln(weighted_mean(lambda^(-IM)))/ln(lambda)`, scaled by 100/3.
   Baseline lambda=9 is configurable per dimension; no fitted normalizer or
   claimed Python-optimal calibration exists.
-- Explicit Python rule mappings win over MQR impacts, then issue-type fallback. The initial
-  efficiency mapping is S2190, also mapped to correctness. Never infer it from
-  message keywords. Unknown mappings remain observable.
+- Efficiency is additive iff authoritative rule metadata has `cleanCodeAttribute=EFFICIENT`.
+  Use the issue's strongest modern impact severity, or valid legacy severity when
+  impacts are absent. Cache active Python rule metadata by profile identity outside
+  the domain engine; missing metadata or zero active EFFICIENT rules must fail.
+  Coefficients may adjust mapped dimensions, never invent or replace mappings.
+  Legacy type mappings apply only without modern impacts. Unknown mappings remain observable.
 
 `CommitDataVector` has exactly these fields, in order:
 

@@ -1,9 +1,11 @@
 """Validated, paginated SonarQube Community Build Web API client."""
 
 import json
+import logging
 import time
 from http.client import HTTPException, HTTPMessage
 from pathlib import Path
+from types import MappingProxyType
 from typing import IO, NoReturn
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -17,31 +19,42 @@ from deltx.common.exceptions import (
     SonarConnectionRefusedError,
 )
 from deltx.scoring.models import (
+    CleanCodeAttribute,
     Dimension,
     IssueImpact,
     IssueType,
+    RuleCatalog,
     Severity,
     SonarIssue,
     SonarMeasures,
+    SonarRuleMetadata,
 )
 from deltx.scoring.sonarqube.config import SonarConfig
 
-IMPACT_SEVERITIES = {
-    "INFO": Severity.INFO,
-    "LOW": Severity.MINOR,
-    "MEDIUM": Severity.MAJOR,
-    "HIGH": Severity.CRITICAL,
-    "BLOCKER": Severity.BLOCKER,
-}
-SOFTWARE_QUALITIES = {
-    "MAINTAINABILITY": Dimension.MAINTAINABILITY,
-    "RELIABILITY": Dimension.CORRECTNESS,
-    "SECURITY": Dimension.SECURITY,
-}
-MQR_METRICS = {
-    "software_quality_maintainability_remediation_effort": "sqale_index",
-    "software_quality_maintainability_debt_ratio": "sqale_debt_ratio",
-}
+logger = logging.getLogger(__name__)
+
+IMPACT_SEVERITIES = MappingProxyType(
+    {
+        "INFO": Severity.INFO,
+        "LOW": Severity.MINOR,
+        "MEDIUM": Severity.MAJOR,
+        "HIGH": Severity.CRITICAL,
+        "BLOCKER": Severity.BLOCKER,
+    }
+)
+SOFTWARE_QUALITIES = MappingProxyType(
+    {
+        "MAINTAINABILITY": Dimension.MAINTAINABILITY,
+        "RELIABILITY": Dimension.CORRECTNESS,
+        "SECURITY": Dimension.SECURITY,
+    }
+)
+MQR_METRICS = MappingProxyType(
+    {
+        "software_quality_maintainability_remediation_effort": "sqale_index",
+        "software_quality_maintainability_debt_ratio": "sqale_debt_ratio",
+    }
+)
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -85,6 +98,7 @@ class SonarQubeClient:
 
     def __init__(self, config: SonarConfig) -> None:
         self.config = config
+        self._rule_catalogs: dict[str, RuleCatalog] = {}
 
     def request(
         self,
@@ -167,7 +181,12 @@ class SonarQubeClient:
 
     @staticmethod
     def _total(payload: dict[str, object]) -> int:
-        value = as_object(payload.get("paging")).get("total")
+        # rules/search uses a top-level total on some supported API versions.
+        value = (
+            as_object(payload["paging"]).get("total")
+            if "paging" in payload
+            else payload.get("total")
+        )
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise SonarClientError("malformed Sonar pagination total")
         return value
@@ -200,34 +219,47 @@ class SonarQubeClient:
             page += 1
 
     @staticmethod
-    def _issue(raw: dict[str, object], project_key: str) -> SonarIssue:
-        impacts: list[IssueImpact] = []
-        dimensions: set[Dimension] = set()
-        for value in as_list(raw.get("impacts", [])):
+    def _severity(value: object, *, modern: bool) -> Severity:
+        text = as_text(value).strip().upper()
+        if modern:
+            if text not in IMPACT_SEVERITIES:
+                raise ConfigurationError(f"unsupported Sonar impact severity {text!r}")
+            return IMPACT_SEVERITIES[text]
+        try:
+            return Severity(text)
+        except ValueError as exc:
+            raise ConfigurationError(f"unsupported Sonar severity {text!r}") from exc
+
+    @staticmethod
+    def _impacts(raw: object) -> tuple[IssueImpact, ...]:
+        severities: dict[Dimension, Severity] = {}
+        for value in as_list(raw):
             impact = as_object(value)
-            quality = as_text(impact.get("softwareQuality"))
-            level = as_text(impact.get("severity"))
-            if quality not in SOFTWARE_QUALITIES or level not in IMPACT_SEVERITIES:
-                raise ConfigurationError(f"unsupported Sonar impact {quality}/{level}")
+            quality = as_text(impact.get("softwareQuality")).strip().upper()
+            if quality not in SOFTWARE_QUALITIES:
+                raise ConfigurationError(
+                    f"unsupported Sonar software quality {quality!r}"
+                )
+            severity = SonarQubeClient._severity(impact.get("severity"), modern=True)
             dimension = SOFTWARE_QUALITIES[quality]
-            if dimension in dimensions:
-                raise SonarClientError("duplicate Sonar software quality impact")
-            dimensions.add(dimension)
-            impacts.append(IssueImpact(dimension, IMPACT_SEVERITIES[level]))
+            previous = severities.get(dimension)
+            if previous is None or severity.weight > previous.weight:
+                severities[dimension] = severity
+        return tuple(
+            IssueImpact(d, severities[d]) for d in Dimension if d in severities
+        )
+
+    @staticmethod
+    def _issue(raw: dict[str, object], project_key: str) -> SonarIssue:
+        impacts = SonarQubeClient._impacts(raw.get("impacts", []))
         if impacts:
             # Count an issue once in CSV densities, at its greatest impact.
-            severity = max((i.severity for i in impacts), key=list(Severity).index)
+            severity = max((i.severity for i in impacts), key=lambda s: s.weight)
         else:
             if "severity" not in raw:
                 raise ConfigurationError("Sonar issue has no severity or impacts")
-            severity_text = as_text(raw.get("severity"))
-            try:
-                severity = Severity(severity_text)
-            except ValueError as exc:
-                raise ConfigurationError(
-                    f"unsupported Sonar severity {severity_text!r}"
-                ) from exc
-        type_text = as_text(raw.get("type", "UNKNOWN"))
+            severity = SonarQubeClient._severity(raw["severity"], modern=False)
+        type_text = as_text(raw.get("type", "UNKNOWN")).strip().upper()
         issue_type = (
             IssueType(type_text) if type_text in IssueType else IssueType.UNKNOWN
         )
@@ -244,11 +276,11 @@ class SonarQubeClient:
             severity,
             issue_type,
             file,
-            tuple(impacts),
+            impacts,
         )
 
-    def measures(self, project_key: str, *, empty: bool = False) -> SonarMeasures:
-        """Parse current measures; missing required metrics are errors for code."""
+    def measures(self, project_key: str) -> SonarMeasures:
+        """Require measured debt, complexity and duplication, including zero values."""
         names = (*SonarMeasures.model_fields, *MQR_METRICS)
         payload = self.request(
             "api/measures/component",
@@ -265,13 +297,73 @@ class SonarQubeClient:
         for modern, domain in MQR_METRICS.items():
             if modern in values:
                 values[domain] = values.pop(modern)
-        if empty or values.get("ncloc") in ("0", 0, 0.0):
-            for name in ("ncloc", "cognitive_complexity", "duplicated_lines_density"):
-                values.setdefault(name, 0)
         try:
             return SonarMeasures.model_validate(values)
         except ValidationError as exc:
             raise SonarClientError(f"malformed/missing Sonar measures: {exc}") from exc
+
+    @staticmethod
+    def _rule(raw: dict[str, object]) -> SonarRuleMetadata:
+        key = as_text(raw.get("key"))
+        if raw.get("lang") != "py":
+            raise SonarClientError(f"expected Python rule metadata for {key}")
+        if "cleanCodeAttribute" not in raw:
+            raise SonarClientError(f"missing cleanCodeAttribute for rule {key}")
+        attribute = as_text(raw["cleanCodeAttribute"]).strip().upper()
+        try:
+            clean_code = CleanCodeAttribute(attribute)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"unsupported cleanCodeAttribute {attribute!r} for {key}"
+            ) from exc
+        return SonarRuleMetadata(
+            key, clean_code, SonarQubeClient._impacts(raw.get("impacts", []))
+        )
+
+    def rule_catalog(self, profile: str) -> RuleCatalog:
+        """Fetch active Python rules once per profile identity, with pagination."""
+        if profile in self._rule_catalogs:
+            return self._rule_catalogs[profile]
+        try:
+            profiles = as_list(json.loads(profile))
+        except ValueError as exc:
+            raise SonarClientError("malformed Python profile identity") from exc
+        if not profiles:
+            raise ConfigurationError(
+                "no active Python quality profile; efficiency rule coverage is unknown"
+            )
+        rules: dict[str, SonarRuleMetadata] = {}
+        for item in profiles:
+            identity = as_object(item)
+            key = as_text(identity.get("key"))
+            raw = self._pages(
+                "api/rules/search",
+                {"qprofile": key, "activation": "true", "languages": "py"},
+                "rules",
+            )
+            if (
+                "activeRuleCount" in identity
+                and len(raw) != identity["activeRuleCount"]
+            ):
+                raise SonarClientError("active Python rule count differs from profile")
+            seen: set[str] = set()
+            for value in raw:
+                rule = self._rule(as_object(value))
+                if rule.key in seen:
+                    raise SonarClientError("duplicate rules across catalog pages")
+                seen.add(rule.key)
+                if rule.key in rules and rules[rule.key] != rule:
+                    raise SonarClientError("inconsistent rule metadata across profiles")
+                rules[rule.key] = rule
+        catalog = RuleCatalog(rules)
+        catalog.require_efficiency_coverage()
+        self._rule_catalogs[profile] = catalog
+        logger.info(
+            "Active Python rules: %d; EFFICIENT rules: %d",
+            len(rules),
+            len(catalog.efficiency_rule_keys),
+        )
+        return catalog
 
     def profile(self, project_key: str, *, empty: bool = False) -> str:
         """Serialize Python profile identity and update timestamp for provenance."""

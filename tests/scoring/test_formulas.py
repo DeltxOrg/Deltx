@@ -8,7 +8,12 @@ import pytest
 from pydantic import ValidationError
 
 from deltx.common.exceptions import ScoringError
-from deltx.scoring.config import DimensionConfig, MetricConfig, ScoringConfig
+from deltx.scoring.config import (
+    DimensionConfig,
+    MetricConfig,
+    RuleMapping,
+    ScoringConfig,
+)
 from deltx.scoring.models import Dimension, Severity
 from deltx.scoring.squale.formulas import (
     aggregate,
@@ -61,11 +66,19 @@ def test_config_constraints() -> None:
         ScoringConfig(dimensions={})
     with pytest.raises(ValidationError):
         ScoringConfig(severity_values={Severity.BLOCKER: 5})
+    for weight in (0, -1, math.inf, math.nan):
+        with pytest.raises(ValidationError):
+            ScoringConfig(maintainability_issue_omega=weight)
 
 
 def test_config_is_deeply_immutable_and_serializable() -> None:
     original = {s: float(i) for i, s in enumerate(Severity, 1)}
-    config = ScoringConfig(severity_values=original)
+    config = ScoringConfig(
+        severity_values=original,
+        rule_overrides=(
+            RuleMapping(rule="python:test", coefficients={Dimension.EFFICIENCY: 1}),
+        ),
+    )
     original[Severity.INFO] = 0.5
     assert config.severity_values[Severity.INFO] == 1
     with pytest.raises(TypeError):

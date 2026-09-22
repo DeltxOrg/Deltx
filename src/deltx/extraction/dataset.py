@@ -159,6 +159,7 @@ def build_dataset(
                 pagerank_percentiles(ranks),
                 historical_churn,
                 config,
+                analysis.rule_catalog,
             )
             if scores.unmapped_rules:
                 logger.warning(

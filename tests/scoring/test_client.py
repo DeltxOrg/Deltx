@@ -2,8 +2,12 @@
 
 import io
 import json
+from collections.abc import MutableMapping
+from dataclasses import FrozenInstanceError
 from email.message import Message
 from http.client import HTTPMessage
+from itertools import permutations
+from typing import cast
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -16,7 +20,13 @@ from deltx.common.exceptions import (
     SonarClientError,
     SonarConnectionRefusedError,
 )
-from deltx.scoring.models import Dimension, Severity
+from deltx.scoring.models import (
+    CleanCodeAttribute,
+    Dimension,
+    RuleCatalog,
+    Severity,
+    SonarRuleMetadata,
+)
 from deltx.scoring.sonarqube.client import (
     SonarQubeClient,
     _RejectRedirects,
@@ -87,7 +97,7 @@ def test_pagination_and_parsing() -> None:
     }
 
 
-def test_measures_optional_and_empty() -> None:
+def test_measures_required_and_optional_debt_ratio() -> None:
     items = [
         {"metric": key, "value": value}
         for key, value in {
@@ -101,13 +111,14 @@ def test_measures_optional_and_empty() -> None:
     result = FakeClient([{"component": {"measures": items}}]).measures("project")
     assert result.ncloc == 100 and result.sqale_index == 60
     assert result.duplicated_lines_density == 2.5
+    items.pop()  # Only debt ratio is optional; remediation effort is required.
     assert (
-        FakeClient([{"component": {"measures": []}}])
-        .measures("project", empty=True)
-        .ncloc
-        == 0
+        FakeClient([{"component": {"measures": items}}])
+        .measures("project")
+        .sqale_debt_ratio
+        is None
     )
-    with pytest.raises(SonarClientError):
+    with pytest.raises(SonarClientError, match="missing Sonar measures"):
         FakeClient([{"component": {"measures": []}}]).measures("project")
 
 
@@ -255,12 +266,41 @@ def test_partition_above_issue_search_cap() -> None:
         broken.issues("project")
 
 
-def test_empty_state_metrics_and_profile() -> None:
-    result = FakeClient(
-        [{"component": {"measures": [{"metric": "ncloc", "value": "0"}]}}]
-    ).measures("p")
-    assert result.cognitive_complexity == result.duplicated_lines_density == 0
+def test_empty_state_does_not_invent_metrics_or_rule_coverage() -> None:
+    with pytest.raises(SonarClientError, match="missing Sonar measures"):
+        FakeClient(
+            [{"component": {"measures": [{"metric": "ncloc", "value": "0"}]}}]
+        ).measures("p")
     assert FakeClient([{"profiles": []}]).profile("p", empty=True) == "[]"
+    with pytest.raises(ConfigurationError, match="no active Python quality profile"):
+        FakeClient([]).rule_catalog("[]")
+
+
+@pytest.mark.parametrize("ncloc", ["0", "100"])
+@pytest.mark.parametrize(
+    "missing", ["sqale_index", "cognitive_complexity", "duplicated_lines_density"]
+)
+def test_required_metrics_fail_even_when_ncloc_is_zero(
+    missing: str, ncloc: str
+) -> None:
+    values = {
+        "ncloc": ncloc,
+        "sqale_index": "0",
+        "cognitive_complexity": "0",
+        "duplicated_lines_density": "0",
+    }
+    items = [{"metric": key, "value": value} for key, value in values.items()]
+    measured = FakeClient([{"component": {"measures": items}}]).measures("p")
+    assert (
+        measured.sqale_index
+        == measured.cognitive_complexity
+        == measured.duplicated_lines_density
+        == 0
+    )
+    del values[missing]
+    items = [{"metric": key, "value": value} for key, value in values.items()]
+    with pytest.raises(SonarClientError, match=missing):
+        FakeClient([{"component": {"measures": items}}]).measures("p")
 
 
 @pytest.mark.parametrize(
@@ -281,6 +321,10 @@ def test_mqr_issues_without_legacy_fields(level: str, expected: Severity) -> Non
     assert issue.severity == expected
     assert issue.impacts[0].dimension == Dimension.CORRECTNESS
     assert issue.impacts[0].severity == expected
+    assert (
+        issue.severity.weight
+        == ["INFO", "LOW", "MEDIUM", "HIGH", "BLOCKER"].index(level) + 1
+    )
 
 
 def test_mqr_preserves_each_severity_and_counts_issue_once_at_maximum() -> None:
@@ -291,7 +335,10 @@ def test_mqr_preserves_each_severity_and_counts_issue_once_at_maximum() -> None:
     ]
     issue = SonarQubeClient._issue(raw, "project")
     assert issue.severity == Severity.CRITICAL  # MQR wins over legacy severity.
-    assert [i.severity for i in issue.impacts] == [Severity.CRITICAL, Severity.MINOR]
+    assert {i.dimension: i.severity for i in issue.impacts} == {
+        Dimension.SECURITY: Severity.CRITICAL,
+        Dimension.MAINTAINABILITY: Severity.MINOR,
+    }
 
 
 @pytest.mark.parametrize(
@@ -299,7 +346,8 @@ def test_mqr_preserves_each_severity_and_counts_issue_once_at_maximum() -> None:
     [
         ([{"softwareQuality": "SECURITY", "severity": "EXTREME"}], ConfigurationError),
         ([{"softwareQuality": "OTHER", "severity": "HIGH"}], ConfigurationError),
-        ([{"softwareQuality": "SECURITY", "severity": "HIGH"}] * 2, SonarClientError),
+        ([{"softwareQuality": "EFFICIENCY", "severity": "HIGH"}], ConfigurationError),
+        ([{"softwareQuality": "SECURITY"}], SonarClientError),
         (None, SonarClientError),
     ],
 )
@@ -345,3 +393,124 @@ def test_api_bearer_auth_uses_configured_context_and_port() -> None:
         request = opened.return_value.open.call_args.args[0]
         assert request.get_header("Authorization") == "Bearer unit-test-token"
         assert request.full_url.startswith(config().host_url + "/api/")
+
+
+def test_duplicate_modern_impacts_reduce_to_strongest_in_any_order() -> None:
+    impacts = [
+        {"softwareQuality": "RELIABILITY", "severity": "MEDIUM"},
+        {"softwareQuality": "RELIABILITY", "severity": "HIGH"},
+        {"softwareQuality": "MAINTAINABILITY", "severity": "LOW"},
+    ]
+    for ordering in permutations(impacts):
+        issue = SonarQubeClient._issue(
+            {**raw_issue(), "impacts": list(ordering)}, "project"
+        )
+        assert issue.severity == Severity.CRITICAL
+        assert {i.dimension: i.severity for i in issue.impacts} == {
+            Dimension.CORRECTNESS: Severity.CRITICAL,
+            Dimension.MAINTAINABILITY: Severity.MINOR,
+        }
+        assert len(issue.impacts) == 2
+
+
+@pytest.mark.parametrize("severity", list(Severity))
+def test_legacy_severity_weights(severity: Severity) -> None:
+    issue = SonarQubeClient._issue(raw_issue(severity=severity.value), "project")
+    assert issue.severity.weight == list(Severity).index(severity) + 1
+
+
+def raw_rule(key: str = "python:S1", attribute: str = "EFFICIENT") -> dict[str, object]:
+    return {
+        "key": key,
+        "lang": "py",
+        "cleanCodeAttribute": attribute,
+        "impacts": [{"softwareQuality": "RELIABILITY", "severity": "HIGH"}],
+    }
+
+
+def test_rule_catalog_pages_once_and_refreshes_after_profile_change() -> None:
+    pages = [
+        {"total": 2, "rules": [raw_rule()]},
+        {"total": 2, "rules": [raw_rule("python:S2", "LOGICAL")]},
+    ]
+    client = FakeClient(pages * 2)
+    profile = '[{"key":"py","activeRuleCount":2,"rulesUpdatedAt":"before"}]'
+    catalog = client.rule_catalog(profile)
+    assert catalog.efficiency_rule_keys == ("python:S1",)
+    assert catalog.get("python:S1").clean_code_attribute is CleanCodeAttribute.EFFICIENT
+    assert catalog.get("python:S2").impacts[0].severity is Severity.CRITICAL
+    for _ in range(10):
+        assert client.rule_catalog(profile) is catalog
+    assert len(client.calls) == 2
+    assert client.calls[0] == (
+        "api/rules/search",
+        {
+            "qprofile": "py",
+            "activation": "true",
+            "languages": "py",
+            "p": "1",
+            "ps": "1",
+        },
+    )
+    assert client.rule_catalog(profile.replace("before", "after")) == catalog
+    assert len(client.calls) == 4
+
+
+def test_rules_normalize_once_at_api_boundary() -> None:
+    raw = raw_rule(attribute=" efficient ")
+    raw["impacts"] = [{"softwareQuality": " reliability ", "severity": " high "}]
+    rule = SonarQubeClient._rule(raw)
+    assert rule.clean_code_attribute is CleanCodeAttribute.EFFICIENT
+    assert rule.impacts[0].dimension is Dimension.CORRECTNESS
+    assert rule.impacts[0].severity is Severity.CRITICAL
+
+
+@pytest.mark.parametrize("attribute", list(CleanCodeAttribute))
+def test_all_supported_clean_code_attributes(attribute: CleanCodeAttribute) -> None:
+    assert (
+        SonarQubeClient._rule(raw_rule(attribute=attribute.value)).clean_code_attribute
+        is attribute
+    )
+
+
+def test_invalid_and_missing_rule_metadata_fail() -> None:
+    missing = raw_rule()
+    del missing["cleanCodeAttribute"]
+    with pytest.raises(SonarClientError, match="missing cleanCodeAttribute"):
+        SonarQubeClient._rule(missing)
+    with pytest.raises(ConfigurationError, match="unsupported cleanCodeAttribute"):
+        SonarQubeClient._rule(raw_rule(attribute="PERFORMANCE"))
+    with pytest.raises(SonarClientError, match="Python rule metadata"):
+        SonarQubeClient._rule({**raw_rule(), "lang": "java"})
+    with pytest.raises(SonarClientError, match="malformed Python profile"):
+        FakeClient([]).rule_catalog("not JSON")
+
+
+def test_no_active_efficiency_rules_fails_instead_of_perfect_score() -> None:
+    client = FakeClient([page([raw_rule(attribute="LOGICAL")], 1, "rules")])
+    with pytest.raises(ConfigurationError, match="no EFFICIENT rules"):
+        client.rule_catalog('[{"key":"py","activeRuleCount":1}]')
+
+
+def test_rule_catalog_rejects_duplicate_and_changed_counts() -> None:
+    profile = '[{"key":"py","activeRuleCount":2}]'
+    with pytest.raises(SonarClientError, match="duplicate rules"):
+        FakeClient([page([raw_rule()], 2, "rules")] * 2).rule_catalog(profile)
+    with pytest.raises(SonarClientError, match="count differs"):
+        FakeClient([page([raw_rule()], 1, "rules")]).rule_catalog(profile)
+
+
+def test_rule_catalog_copies_and_freezes_its_metadata() -> None:
+    rule = SonarQubeClient._rule(raw_rule())
+    original = {rule.key: rule}
+    catalog = RuleCatalog(original)
+    original.clear()
+    assert catalog.get(rule.key) == rule
+    with pytest.raises(TypeError):
+        cast(MutableMapping[str, SonarRuleMetadata], catalog.rules)["python:other"] = (
+            rule
+        )
+    with pytest.raises(FrozenInstanceError):
+        rule.clean_code_attribute = CleanCodeAttribute.LOGICAL  # type: ignore[misc]
+    with pytest.raises(ConfigurationError, match="keys do not match"):
+        RuleCatalog({"wrong": rule})
