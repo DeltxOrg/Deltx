@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(StrEnum):
-    """The legacy Sonar severity contract required by the research schema."""
+    """Five ordinal buckets; MQR LOW/MEDIUM/HIGH normalize to MINOR/MAJOR/CRITICAL."""
 
     INFO = "INFO"
     MINOR = "MINOR"
@@ -37,6 +37,14 @@ class IssueType(StrEnum):
 
 
 @dataclass(frozen=True)
+class IssueImpact:
+    """One software quality's impact, normalized at the Sonar API boundary."""
+
+    dimension: Dimension
+    severity: Severity
+
+
+@dataclass(frozen=True)
 class SonarIssue:
     """One current issue, with a repository-relative file if available."""
 
@@ -45,6 +53,7 @@ class SonarIssue:
     severity: Severity
     issue_type: IssueType
     file: Path | None
+    impacts: tuple[IssueImpact, ...] = ()
 
 
 class SonarMeasures(BaseModel):
@@ -68,6 +77,8 @@ class Analysis:
     profile: str
     scanner_version: str
     analysis_id: str = ""
+    scanner_image_id: str = ""
+    issue_model: str = "MQR_PREFERRED_V1"
 
 
 @dataclass(frozen=True)

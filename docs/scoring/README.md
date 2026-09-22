@@ -12,45 +12,81 @@ points. Dataset extraction owns the complete scan, context and scoring workflow.
 ## Local Docker workflow
 
 ```bash
-docker compose -f docker/sonarqube/compose.yaml up -d sonarqube
-# Open http://localhost:19000, complete initial setup, and create a user token
+# For a new checkout, copy .env.example to .env. Keep an existing .env.
+# Set SONAR_HOST_URL in .env, then:
+poetry run deltx sonar up
+# Open SONAR_HOST_URL, complete initial setup, and create a User token
 # with Browse, Execute Analysis, and project-creation permission if needed.
 # Set SONAR_TOKEN in the environment or your untracked .env file.
 poetry run deltx dataset /path/to/python-repository --output dataset.csv
 poetry run deltx dataset /path/to/python-repository --output all.csv --no-filter
+poetry run deltx sonar down  # retains volumes
 ```
 
-The pinned research stack is SonarQube **9.9.8-community** and SonarScanner
-**5.0.1** (Java 17 in the scanner image). This deliberately retains the
-INFO/MINOR/MAJOR/CRITICAL/BLOCKER severity contract. It is a historical research
-baseline, not a recommendation to expose this server publicly. Compose binds
-host port 19000 to loopback and keeps data, extensions, logs and a persistent Docker
-network. The single-node embedded database is for local research.
+The stack uses **`sonarqube:latest`** (Community Build) and
+**`sonarsource/sonar-scanner-cli:latest`**. Compose pulls the server when starting
+the stack. The scanner image is pulled once per analyzer instance and then
+addressed by its immutable image ID for every checkpoint. Actual server/scanner
+versions, scanner image ID and Python quality profile are recorded in the sidecar.
+The single-node embedded database is for local research.
 
-The manager probes `SONAR_HOST_URL` (default `http://localhost:19000`). A healthy
-existing server is preserved. An existing starting server is awaited. If the
-default endpoint refuses connections, Deltx starts its Compose stack and waits
+`SONAR_HOST_URL` is required in `.env` (or an environment override). There is no
+separate scanner URL or port setting. `deltx sonar up/down` derives the loopback
+binding and web context from this URL and passes them to Compose. Use these
+commands instead of invoking Compose without the derived environment. HTTP
+servers can be started automatically; HTTPS servers must be provided separately.
+
+The manager probes `SONAR_HOST_URL`. A healthy existing server is preserved.
+An existing starting server is awaited. If the configured endpoint refuses
+connections, Deltx starts its Compose stack and waits
 for readiness. Timeouts, authentication errors and malformed responses fail
-without starting another server. It never stops servers, including servers it
-started. Docker must be available even when the server already runs because
+without starting another server. Dataset runs do not stop servers. The explicit
+`sonar down` command stops only the managed stack and keeps its volumes.
+Docker must be available even when the server already runs because
 the scanner is Dockerized.
 
-For a newly started stack, the scanner uses Docker DNS (`sonarqube:9000`). For
-an existing local server it uses host networking on Linux (including loopback-only
-servers) and `host.docker.internal` with the host-gateway mapping on Docker Desktop.
-`SONAR_SCANNER_HOST_URL` can override container routing; for example,
-use `http://host.docker.internal:19000` when a custom container setup needs it.
+The scanner uses the same URL with host networking on Linux (including
+loopback-only servers). Docker Desktop substitutes `host.docker.internal` for
+the loopback hostname while preserving the configured scheme, port and path.
 `SONAR_COMPOSE_FILE` locates the Compose file for installations outside this
-checkout. `SONAR_EXPECTED_VERSION`, `SONAR_SCANNER_IMAGE`, request/startup/scan/
-Compute Engine timeouts, and polling interval are typed settings in
-`scoring/sonarqube/config.py`. Version changes require deliberate configuration
-and compatible severity metadata; unfamiliar severities are rejected.
+checkout. An optional `SONAR_EXPECTED_VERSION` constrains the server version for
+repeat experiments. `SONAR_SCANNER_IMAGE` can select a registry image digest.
+Request/startup/scan/Compute Engine timeouts and polling interval are typed settings
+in `scoring/sonarqube/config.py`. Community Build 25+ and Server 2025+ version
+formats are accepted; the live integration test targets the current `latest`
+image. Unfamiliar severities or software qualities fail explicitly.
 
-Authentication is a secret setting. The scanner receives `sonar.login` in a
-temporary mode-0600 settings file, not in the host command line. It runs as the
+Authentication is a secret setting. The HTTP client uses Bearer authentication;
+the public readiness endpoint is queried without credentials.
+The scanner receives `sonar.token` in a temporary mode-0600 settings file,
+not in the host command line. It runs as the
 host UID/GID on Unix. The settings file and scan work directory are removed
 afterward, and subprocess diagnostics redact the token. No Java or scanner
 installation is needed on the host.
+
+### Moving from the old 9.9 stack
+
+The Compose project is now `deltx-sonarqube-current`, with new data, extension
+and log volumes. The old `deltx-sonarqube_sonar-*` volumes are retained. This
+starts a fresh server with the current built-in Python profile and requires a
+new User token; a token from the old server will not authenticate. Stop an old
+server occupying `SONAR_HOST_URL` before starting the new one. Existing datasets
+are unchanged; regenerate them into a new output to compare the new baseline.
+
+If the old Deltx stack is still running, stop it without deleting its volumes:
+
+```bash
+COMPOSE_PROJECT_NAME=deltx-sonarqube poetry run deltx sonar down
+poetry run deltx sonar up
+```
+
+To retain old server accounts, profiles and analysis history, follow SonarSource's
+[supported database update path](https://docs.sonarsource.com/sonarqube-community-build/server-update-and-maintenance/update/determine-path)
+with backups and intermediate versions. Do not mount the 9.9 data or old plugin
+volume directly into `latest`. Subsequent server updates also need the supported
+database path; `latest` is a moving tag, not a reproducibility guarantee.
+
+### Analysis and collection
 
 Each scan sees a fresh snapshot of tracked, regular `.py` files only. Symlinks,
 submodules and generated/environment directories are omitted; tests remain.
@@ -64,11 +100,16 @@ FAILED, CANCELED, timeout or malformed responses. It verifies the latest analysi
 ID before and after collection and rejects server-version or Python-profile
 changes across checkpoints. API redirects are rejected. Do not run concurrent
 jobs against the same project key. HTTP requests are bounded; active issues use
-`resolved=false` and pagination. Above Sonar's 10,000-result cap, queries partition by file; an
+`components=<project>` and `issueStatuses=OPEN,CONFIRMED` with pagination.
+Accepted, false-positive, fixed and sandbox findings are excluded.
+Above Sonar's 10,000-result cap, queries partition by file; an
 unretrievable partition or inconsistent total fails rather than truncating data.
 
 The API retrieves `ncloc`, `cognitive_complexity`, `duplicated_lines_density`,
-`sqale_index` and `sqale_debt_ratio`. Missing required measures on nonempty code
+`software_quality_maintainability_remediation_effort` and
+`software_quality_maintainability_debt_ratio`. These populate the domain's
+`sqale_index` and `sqale_debt_ratio` fields; legacy measures are a fallback if
+MQR values are absent. Missing required measures on nonempty code
 fail. Missing debt is recorded as absent and contributes no debt synthetic mark.
 No Sonar A–E rating is used as a Deltx target.
 
@@ -154,20 +195,31 @@ checkpoints, including filtered checkpoints. Renames preserve file identity;
 newly added files do not inherit unrelated deleted-file history. The current
 change and future/sibling commits cannot enter `V(f,t)`.
 
-The severity baseline is INFO=1, MINOR=2, MAJOR=3, CRITICAL=4, BLOCKER=5.
+The V2 baseline prefers MQR impacts even when legacy fields are also returned.
+MAINTAINABILITY→MAINTAINABILITY, RELIABILITY→CORRECTNESS and SECURITY→SECURITY.
+Each quality keeps its own impact severity; an issue can affect multiple scores.
+MQR INFO/LOW/MEDIUM/HIGH/BLOCKER normalize to the existing
+INFO/MINOR/MAJOR/CRITICAL/BLOCKER buckets (1/2/3/4/5). The four CSV density
+columns keep their names and count each issue once at its maximum impact.
+This mapping changes the scoring baseline; do not mix V1 and V2 rows as if
+they used the same targets.
+
 Overrides map rule keys to one or more dimensions with coefficients in `(0,1]`;
-explicit overrides win. Fallbacks are BUG→CORRECTNESS,
+explicit overrides win over MQR mappings. An overridden dimension without a
+corresponding impact uses the issue's maximum severity. If impacts are absent,
+fallbacks are BUG→CORRECTNESS,
 VULNERABILITY/SECURITY_HOTSPOT→SECURITY, CODE_SMELL→MAINTAINABILITY.
-Unknown types without overrides are listed in metadata and logged.
+Unknown types without impacts or overrides are listed in metadata and logged.
 
 The initial curated efficiency override is `python:S2190` (unbounded recursion):
 it influences correctness and efficiency with M=1 each, accounting for wasted
 CPU/stack resources as well as failure. This is an explicit Deltx research
 mapping, not a Sonar efficiency classification. Broader performance/resource
 coverage needs review and calibration. Message keywords never determine mapping.
-The selected issues endpoint does not expose security hotspots with this severity
-contract; separate hotspot review-priority values are **not** converted into
-invented severities, so those hotspots are outside this baseline's scores.
+Only findings returned by the issues API enter scoring. Security findings with
+MQR impacts contribute normally. Separate hotspot review priorities are not
+converted into issue severities. More rules do not guarantee a lower score;
+efficiency still depends on the explicit performance-rule mapping.
 
 Maintainability adds marks for `sqale_index/ncloc*1000` (debt minutes/KLOC),
 `cognitive_complexity/ncloc*1000`, and duplication percentage, even with no smells.
@@ -184,7 +236,7 @@ values are rejected before writing CSV.
 
 ## Baseline configuration and output
 
-`PYTHON_RESEARCH_BASELINE_V1` uses equal alpha/beta/gamma=1/3, rho=1, kappa=1,
+`PYTHON_RESEARCH_BASELINE_V2` uses equal alpha/beta/gamma=1/3, rho=1, kappa=1,
 lambda=9 and omega=1 per dimension. Synthetic tau values are 1000 debt minutes/KLOC,
 100 cognitive complexity/KLOC and 5% duplication, with k=1 and omega=1. H=50,
 delta=0.9, PageRank damping=0.85, tolerance=1e-12 and max iterations=1000.
@@ -199,18 +251,64 @@ from deltx.scoring.config import ScoringConfig
 Path("baseline.json").write_text(ScoringConfig().model_dump_json(indent=2))
 ```
 
-The model CSV has exactly these columns, in order, with no index or identity fields:
+The dataset CSV has 17 columns: two string identifiers followed by the 15 numeric
+features. There is no extra DataFrame index column:
 
 ```text
-score_maintainability,score_correctness,score_security,score_efficiency,
+repository,commit_hash,score_maintainability,score_correctness,score_security,score_efficiency,
 ai_confidence_pct,loc_added,loc_deleted,files_modified_count,
 avg_pagerank_centrality,density_blocker_issues,density_critical_issues,
 density_major_issues,density_minor_issues,cognitive_complexity,duplication_density
 ```
 
+`repository` is the resolved absolute repository path, matching the sidecar.
+Using the full path keeps repositories with equal directory names distinct.
+Paths identify local checkouts: when combining exports from different machines
+or multiple clones, assign consistent repository IDs before grouping; also avoid
+placing related clones/forks with shared commits in different evaluation splits.
+No remote URL or credentials are copied from Git configuration.
+
+`commit_hash` is the full Git commit object ID, matching sidecar `commit_sha`.
+It identifies an exact snapshot across filtered and unfiltered exports; a row
+number would change with checkpoint selection. Hashes do not express order.
+Keep each repository's exported reverse-topological row order, or join its
+sidecar to restore order after shuffling. Author timestamps are not a substitute
+for ancestry order. Deduplicate overlapping exports by `(repository, commit_hash)`
+after selecting one consistent scoring configuration and analyzer version.
+
+For transformer preparation, group by repository first, then select the numeric
+feature schema explicitly:
+
+```python
+import pandas as pd
+from deltx.common.models import CommitDataVector
+
+frame = pd.read_csv("dataset.csv", dtype={"repository": "string", "commit_hash": "string"})
+feature_columns = list(CommitDataVector.model_fields)
+series_by_repository = {
+    repository: rows.loc[:, feature_columns].to_numpy(dtype="float32")
+    for repository, rows in frame.groupby("repository", sort=False)
+}
+```
+
+`CommitDataVector` remains 15-dimensional. The identifiers control grouping and
+traceability; do not encode hashes or filesystem paths as numeric input channels.
+Construct input/target windows within each repository, never across a repository
+boundary. For forecasting within known repositories, split in temporal order
+before constructing windows so training targets never come from the test period.
+For evaluation on unseen repositories, hold out whole repositories. These answer
+different research questions; a random split of overlapping commit windows does
+not establish either result. See the
+[grouped and time-series validation guidance](https://scikit-learn.org/stable/modules/cross_validation.html).
+
+This header applies to newly generated CSVs. Existing 15-column exports can be
+joined to their matching metadata sidecar; the writer does not rewrite old files
+unless that output is explicitly selected for a new run.
+
 The separate `<name>.metadata.csv` records matching row index, commit SHA/time,
 first parent, traversal policy, repository and captured HEAD, filtering,
-server/profile/scanner and Python versions, analysis ID, config version/full
+server/profile/scanner and Python versions, scanner image ID, issue model
+(`MQR_PREFERRED_V1`), analysis ID, config version/full
 JSON/hash, AI evidence and unknown rules. Keep these fields outside the feature
 matrix. Both files are staged before publication; analysis failure preserves
 existing outputs. An ordinary publication error restores the previous pair;
@@ -239,11 +337,13 @@ keep its analysis settings fixed; the API checks do not prove freedom from
 pre-existing triage. Profile/version checks catch drift during a run, but
 Python parser versions, analyzer plugins and detector versions also affect
 results. Keep the recorded configuration and tool environment fixed for
-comparable experiments. Pinned older Sonar analyzers may not understand newer
-Python syntax; the semantic filter's conservative fallback does not upgrade
-Sonar's parser.
+comparable experiments. Pulling `latest` between runs can change active rules
+and scores. Profile/version checks detect changes during a dataset run; they do
+not make datasets from different analyzer releases directly comparable.
 
-References: [SonarScanner 9.9 documentation](https://docs.sonarsource.com/sonarqube-server/9.9/analyzing-source-code/scanners/sonarscanner),
+References: [SonarQube Web API](https://docs.sonarsource.com/sonarqube-community-build/extension-guide/web-api),
+[MQR modes and severities](https://docs.sonarsource.com/sonarqube-community-build/user-guide/code-metrics/changing-modes),
+[metric definitions](https://docs.sonarsource.com/sonarqube-community-build/user-guide/code-metrics/metrics-definition),
 [SonarSource Python S2190 announcement](https://community.sonarsource.com/t/python-analysis-detects-more-tricky-quality-issues-unused-assigned-variables-infinite-loops-ignored-parameters-initial-value-and-more/17146),
-[pinned server image](https://hub.docker.com/layers/library/sonarqube/9.9.8-community/images/sha256-f5f29a61164204ea3ffd8c9ad74413e2c06c94823f2c671b548cb0b916caba4f),
-[pinned scanner Java 17 image](https://hub.docker.com/layers/sonarsource/sonar-scanner-cli/5.0.1/images/sha256-02372948eaeeb10dfbe0cfd4174d44b8e405d0aeae431532b2bdb21d0347bf23).
+[server image](https://hub.docker.com/_/sonarqube),
+[scanner image](https://hub.docker.com/r/sonarsource/sonar-scanner-cli).

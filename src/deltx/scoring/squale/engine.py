@@ -21,6 +21,8 @@ def map_issue(issue: SonarIssue, config: ScoringConfig) -> dict[Dimension, float
     for override in config.rule_overrides:
         if override.rule == issue.rule:
             return dict(override.coefficients)
+    if issue.impacts:
+        return {impact.dimension: 1.0 for impact in issue.impacts}
     dimension = config.fallback_mapping.get(issue.issue_type)
     return {} if dimension is None else {dimension: 1.0}
 
@@ -40,10 +42,11 @@ def score_checkpoint(
         mapping = map_issue(issue, config)
         if not mapping:
             unmapped.add(issue.rule)
+        severities = {impact.dimension: impact.severity for impact in issue.impacts}
         for dimension, coefficient in mapping.items():
             params = config.dimensions[dimension]
             weight = dynamic_weight(
-                config.severity_values[issue.severity],
+                config.severity_values[severities.get(dimension, issue.severity)],
                 bounded_log(density(counts[issue.rule], measures.ncloc)),
                 centrality.get(issue.file, 0.0) if issue.file else 0.0,
                 churn.get(issue.file, 0.0) if issue.file else 0.0,

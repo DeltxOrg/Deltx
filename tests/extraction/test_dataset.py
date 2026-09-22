@@ -14,7 +14,12 @@ from deltx.common.models import CommitDataVector
 from deltx.detection.inference import AIDetectionInference
 from deltx.extraction.checkpoints import CheckpointHistory, isolated_repository
 from deltx.extraction.cli import cli
-from deltx.extraction.dataset import build_dataset, write_dataset
+from deltx.extraction.dataset import (
+    DATASET_COLUMNS,
+    DatasetCheckpoint,
+    build_dataset,
+    write_dataset,
+)
 from deltx.extraction.git_history import GitRepository
 from deltx.extraction.semantics import meaningful_change
 from deltx.extraction.topology import dependency_pagerank, pagerank_percentiles
@@ -116,6 +121,12 @@ def test_selection_churn_and_untouched_worktree(
     analyzer = FakeAnalyzer()
     rows = list(build_dataset(repo.root, fake_inference, analyzer, ScoringConfig()))
     assert analyzer.revisions == [first, second, third]
+    output = repo.root.parent / "filtered.csv"
+    write_dataset(iter(rows), output)
+    with output.open() as file:
+        exported = list(csv.DictReader(file))
+    assert [row["commit_hash"] for row in exported] == [first, second, third]
+    assert {row["repository"] for row in exported} == {str(repo.root.resolve())}
     assert [r.row.files_modified_count for r in rows] == [1, 1, 1]
     assert rows[1].row.loc_added == rows[1].row.loc_deleted == 1
     assert rows[2].row.loc_deleted == 3
@@ -174,16 +185,78 @@ def test_no_filter_and_exact_csv(
         "cognitive_complexity",
         "duplication_density",
     ]
-    assert data[0] == expected == list(CommitDataVector.model_fields)
-    assert all(len(row) == 15 for row in data)
-    assert all(math.isfinite(float(value)) for row in data[1:] for value in row)
+    assert expected == list(CommitDataVector.model_fields)
+    assert data[0] == ["repository", "commit_hash", *expected] == list(DATASET_COLUMNS)
+    assert all(len(row) == 17 for row in data)
+    assert all(math.isfinite(float(value)) for row in data[1:] for value in row[2:])
     with output.with_suffix(".metadata.csv").open() as file:
         metadata = list(csv.DictReader(file))
     assert len(metadata) == 2 and metadata[1]["row_index"] == "1"
     assert metadata[1]["ai_evidence"] == "no-scoreable-files"
+    for exported, provenance in zip(data[1:], metadata, strict=True):
+        assert exported[:2] == [provenance["repository"], provenance["commit_sha"]]
+        assert len(exported[1]) == 40
     before = output.read_bytes()
     write_dataset(iter(rows), output)
     assert output.read_bytes() == before
+
+
+def test_combined_export_keeps_repository_groups_and_commit_order(
+    repo_builder: Builder, fake_inference: AIDetectionInference
+) -> None:
+    # Equal basenames must not collapse unrelated histories into one series.
+    repositories = [
+        repo_builder('owner-a/project, "one"'),
+        repo_builder('owner-b/project, "one"'),
+    ]
+    checkpoints: list[DatasetCheckpoint] = []
+    identities: list[tuple[str, str]] = []
+    for repository in repositories:
+        for value in (1, 2):
+            repository.write("app.py", f"x={value}\n")
+            sha = repository.commit(f"value {value}")
+            identities.append((str(repository.root.resolve()), sha))
+        checkpoints.extend(
+            build_dataset(
+                repository.root, fake_inference, FakeAnalyzer(), ScoringConfig()
+            )
+        )
+    output = repositories[0].root.parent / "combined.csv"
+    assert write_dataset(iter(checkpoints), output) == 4
+    with output.open() as file:
+        records = list(csv.DictReader(file))
+    assert [(r["repository"], r["commit_hash"]) for r in records] == identities
+    assert len({r["repository"] for r in records}) == 2
+
+
+@pytest.mark.parametrize("field,value", [("repository", ""), ("commit_sha", "abc123")])
+def test_missing_identity_preserves_previous_csv_pair(
+    repo_builder: Builder,
+    fake_inference: AIDetectionInference,
+    field: str,
+    value: str,
+) -> None:
+    repository = repo_builder("source")
+    repository.write("app.py", "x=1\n")
+    repository.commit("first")
+    rows = list(
+        build_dataset(repository.root, fake_inference, FakeAnalyzer(), ScoringConfig())
+    )
+    output = repository.root.parent / "output.csv"
+    write_dataset(iter(rows), output)
+    metadata = output.with_suffix(".metadata.csv")
+    original = (output.read_bytes(), metadata.read_bytes())
+    rows[0].metadata[field] = value
+    with pytest.raises(ExtractionError, match="identity|full commit hash"):
+        write_dataset(iter(rows), output)
+    assert (output.read_bytes(), metadata.read_bytes()) == original
+
+
+def test_empty_export_still_has_identity_and_feature_headers(tmp_path: Path) -> None:
+    output = tmp_path / "empty.csv"
+    assert write_dataset(iter(()), output) == 0
+    with output.open() as file:
+        assert list(csv.reader(file)) == [list(DATASET_COLUMNS)]
 
 
 def test_code_changing_rename_and_history(repo_builder: Builder) -> None:
@@ -252,6 +325,8 @@ def test_cli_aliases(
     repo.write("README.md", "docs")
     repo.commit("docs")
     monkeypatch.setenv("SONAR_TOKEN", "unit-test-token")
+    monkeypatch.setenv("SONAR_HOST_URL", "http://localhost:19876")
+    monkeypatch.chdir(repo.root)  # No developer .env is available in CI.
     analyzer = FakeAnalyzer()
     with patch(
         "deltx.extraction.cli.AIDetectionInference.from_config",

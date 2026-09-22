@@ -1,6 +1,7 @@
 """Dockerized Python-only scanner and completed-checkpoint collection."""
 
 import os
+import re
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -38,6 +39,36 @@ class DockerSonarScanner:
         self.config = config
         self.client = client
         self.manager = manager
+        self.image_id = ""
+        self.version = ""
+
+    def prepare(self) -> None:
+        """Refresh the image once, then use its immutable ID for the whole run."""
+        if self.image_id:
+            return
+        run_process(
+            ["docker", "pull", self.config.scanner_image],
+            timeout=self.config.scan_timeout,
+            error_type=SonarClientError,
+        )
+        image_id = (
+            run_process(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{.Id}}",
+                    self.config.scanner_image,
+                ],
+                error_type=SonarClientError,
+            )
+            .decode()
+            .strip()
+        )
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise SonarClientError("Docker returned an invalid scanner image ID")
+        self.image_id = image_id
 
     def command(
         self, source: Path, work: Path, project_key: str, revision: str
@@ -46,9 +77,7 @@ class DockerSonarScanner:
         args = ["docker", "run", "--rm"]
         if hasattr(os, "getuid"):
             args.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
-        if self.manager.started:
-            args.extend(["--network", self.config.network])
-        elif sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux"):
             args.extend(["--network", "host"])
         else:
             args.extend(["--add-host", "host.docker.internal:host-gateway"])
@@ -62,7 +91,7 @@ class DockerSonarScanner:
                 "SONAR_USER_HOME=/tmp/sonar-cache",
                 "--workdir",
                 "/usr/src",
-                self.config.scanner_image,
+                self.image_id or self.config.scanner_image,
                 "-Dproject.settings=/deltx-work/scanner.properties",
                 f"-Dsonar.host.url={self.manager.scanner_url()}",
                 f"-Dsonar.projectKey={project_key}",
@@ -88,20 +117,23 @@ class DockerSonarScanner:
                 "SONAR_TOKEN missing; create a token with "
                 "Execute Analysis and Browse permissions"
             )
+        self.prepare()
         with TemporaryDirectory(prefix="deltx-scanner-") as directory:
             work = Path(directory)
             settings = work / "scanner.properties"
             settings.touch(mode=0o600)
-            # Scanner 5 + Server 9.9 authenticate via sonar.login, not sonar.token.
             settings.write_text(
-                f"sonar.login={_properties_escape(token)}\n", encoding="utf-8"
+                f"sonar.token={_properties_escape(token)}\n", encoding="utf-8"
             )
-            run_process(
+            output = run_process(
                 self.command(source, work, project_key, revision),
                 timeout=self.config.scan_timeout,
                 secrets=(token,),
                 error_type=SonarClientError,
             )
+            version = re.search(rb"SonarScanner (?:CLI )?(\d[\w.-]*)", output)
+            if version:
+                self.version = version[1].decode()
             report = work / "report-task.txt"
             if not report.is_file():
                 raise SonarClientError("Sonar scan finished without report-task.txt")
@@ -170,6 +202,7 @@ class SonarCheckpointAnalyzer:
             measures,
             self.version,
             profile,
-            self.config.scanner_image,
+            self.scanner.version,
             analysis_id,
+            self.scanner.image_id,
         )

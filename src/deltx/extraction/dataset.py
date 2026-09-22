@@ -1,10 +1,11 @@
-"""Chronological 15-D dataset orchestration, separate from scoring formulas."""
+"""Dataset export with repository/commit identity and 15 numeric features."""
 
 import csv
 import hashlib
 import json
 import logging
 import platform
+import re
 import shutil
 from collections import Counter
 from collections.abc import Iterator
@@ -26,6 +27,8 @@ from deltx.scoring.squale.formulas import bounded_log, density
 
 logger = logging.getLogger(__name__)
 
+DATASET_COLUMNS = ("repository", "commit_hash", *DatasetRow.model_fields)
+
 METADATA_COLUMNS = (
     "row_index",
     "commit_sha",
@@ -36,6 +39,8 @@ METADATA_COLUMNS = (
     "sonar_version",
     "sonar_profile",
     "sonar_scanner_version",
+    "sonar_scanner_image_id",
+    "sonar_issue_model",
     "sonar_analysis_id",
     "sonar_project_key",
     "scoring_config_version",
@@ -194,6 +199,8 @@ def build_dataset(
                     "sonar_version": analysis.sonar_version,
                     "sonar_profile": analysis.profile,
                     "sonar_scanner_version": analysis.scanner_version,
+                    "sonar_scanner_image_id": analysis.scanner_image_id,
+                    "sonar_issue_model": analysis.issue_model,
                     "sonar_analysis_id": analysis.analysis_id,
                     "sonar_project_key": project_key,
                     "scoring_config_version": config.version,
@@ -222,7 +229,6 @@ def write_dataset(checkpoints: Iterator[DatasetCheckpoint], output: Path) -> int
     for target in (output, metadata_path):
         if target.exists() and not target.is_file():
             raise ExtractionError(f"CSV destination is not a regular file: {target}")
-    columns = tuple(DatasetRow.model_fields)
     directory = Path(mkdtemp(prefix=".deltx-output-", dir=output.parent))
     recovery_needed = False
     try:
@@ -233,14 +239,34 @@ def write_dataset(checkpoints: Iterator[DatasetCheckpoint], output: Path) -> int
             model_temp.open("w", newline="", encoding="utf-8") as model_file,
             metadata_temp.open("w", newline="", encoding="utf-8") as metadata_file,
         ):
-            writer = csv.DictWriter(model_file, fieldnames=columns, lineterminator="\n")
+            writer = csv.DictWriter(
+                model_file, fieldnames=DATASET_COLUMNS, lineterminator="\n"
+            )
             writer.writeheader()
             metadata_writer = csv.DictWriter(
                 metadata_file, fieldnames=METADATA_COLUMNS, lineterminator="\n"
             )
             metadata_writer.writeheader()
             for checkpoint in checkpoints:
-                writer.writerow(checkpoint.row.model_dump())
+                repository = checkpoint.metadata.get("repository")
+                commit_hash = checkpoint.metadata.get("commit_sha")
+                if not isinstance(repository, str) or not repository.strip():
+                    raise ExtractionError(
+                        "dataset checkpoint has no repository identity"
+                    )
+                if not isinstance(commit_hash, str) or not re.fullmatch(
+                    r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit_hash
+                ):
+                    raise ExtractionError(
+                        "dataset checkpoint requires a full commit hash"
+                    )
+                writer.writerow(
+                    {
+                        "repository": repository,
+                        "commit_hash": commit_hash,
+                        **checkpoint.row.model_dump(),
+                    }
+                )
                 metadata_writer.writerow(checkpoint.metadata)
                 count += 1
         backups: dict[Path, Path | None] = {}

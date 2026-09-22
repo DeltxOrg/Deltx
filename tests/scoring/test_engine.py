@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from deltx.scoring.config import RuleMapping, ScoringConfig
 from deltx.scoring.models import (
     Dimension,
+    IssueImpact,
     IssueType,
     Severity,
     SonarIssue,
@@ -95,3 +96,38 @@ def test_zero_ncloc_and_mapping_validation() -> None:
         RuleMapping(rule="python:test", coefficients={Dimension.SECURITY: -1})
     with pytest.raises(ValidationError):
         RuleMapping(rule="python:test", coefficients={})
+
+
+def test_mqr_scores_each_quality_with_its_own_severity() -> None:
+    finding = SonarIssue(
+        "a",
+        "python:multi",
+        Severity.BLOCKER,
+        IssueType.CODE_SMELL,
+        Path("a.py"),
+        (
+            IssueImpact(Dimension.SECURITY, Severity.BLOCKER),
+            IssueImpact(Dimension.CORRECTNESS, Severity.MINOR),
+        ),
+    )
+    config = ScoringConfig()
+    assert map_issue(finding, config) == {
+        Dimension.SECURITY: 1,
+        Dimension.CORRECTNESS: 1,
+    }
+    result = score_checkpoint((finding,), measures(), {}, {}, config)
+    assert result.security < result.correctness < 100
+    assert result.maintainability == result.efficiency == 100
+
+
+def test_override_retains_efficiency_when_mqr_impacts_are_available() -> None:
+    finding = SonarIssue(
+        "a",
+        "python:S2190",
+        Severity.BLOCKER,
+        IssueType.BUG,
+        Path("a.py"),
+        (IssueImpact(Dimension.CORRECTNESS, Severity.BLOCKER),),
+    )
+    result = score_checkpoint((finding,), measures(), {}, {}, ScoringConfig())
+    assert result.correctness == result.efficiency < 100

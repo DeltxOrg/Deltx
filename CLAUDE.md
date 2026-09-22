@@ -299,9 +299,14 @@ include every checkpoint. The existing AI-only Parquet command remains available
 - Use isolated Git snapshots, first-parent diffs, conservative semantic filtering,
   and ancestral churn without future or sibling-branch information.
 - The graph is a static Python import graph, not a runtime call graph.
-- SonarQube 9.9.8-community and Scanner 5.0.1 are pinned research baselines.
+- Use `sonarqube:latest` and `sonarsource/sonar-scanner-cli:latest`; freeze the
+  scanner image ID within each dataset run and record actual tool versions.
   Wait for Compute Engine SUCCESS before retrieving issues/measures.
-- Severity values are INFO=1, MINOR=2, MAJOR=3, CRITICAL=4, BLOCKER=5.
+  `SONAR_HOST_URL` in `.env` supplies every host URL, port and context path;
+  `deltx sonar up/down` derives Compose settings from it.
+- Prefer MQR impacts and their per-quality severities. Normalize
+  INFO/LOW/MEDIUM/HIGH/BLOCKER to INFO/MINOR/MAJOR/CRITICAL/BLOCKER (1–5).
+  Count each issue once at its maximum impact severity for CSV densities.
 - Dynamic risk is `M*S*[1+rho*(alpha*F'+beta*C'+gamma*CH')]`, where frequency
   and historical volatility use bounded log normalization and centrality uses ECDF.
 - Individual mark is `3*(1-clip(W/(5*(1+rho)),0,1)^kappa)`.
@@ -310,7 +315,7 @@ include every checkpoint. The existing AI-only Parquet command remains available
 - SQUALE is `-ln(weighted_mean(lambda^(-IM)))/ln(lambda)`, scaled by 100/3.
   Baseline lambda=9 is configurable per dimension; no fitted normalizer or
   claimed Python-optimal calibration exists.
-- Explicit Python rule mappings win over issue-type fallback. The initial
+- Explicit Python rule mappings win over MQR impacts, then issue-type fallback. The initial
   efficiency mapping is S2190, also mapped to correctness. Never infer it from
   message keywords. Unknown mappings remain observable.
 
@@ -334,7 +339,13 @@ include every checkpoint. The existing AI-only Parquet command remains available
 | 13 | cognitive_complexity |
 | 14 | duplication_density |
 
-Commit/config/server provenance belongs exclusively in the metadata sidecar.
+The exported CSV prepends `repository` and `commit_hash` to these 15 numeric
+features (17 columns total). These two strings identify sequences and snapshots;
+they are not transformer input channels. Repository identity is the resolved
+local path; the commit hash is the full Git object ID. The metadata sidecar
+retains the same identity under `repository` and `commit_sha`, plus detailed
+commit/config/server provenance. Build windows within each repository and
+preserve its exported reverse-topological order; never sort by commit hash.
 See the guide for empty-state and missing-evidence policies and full formulas.
 
 ## Coding Conventions

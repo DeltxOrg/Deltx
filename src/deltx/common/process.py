@@ -1,7 +1,7 @@
 """Subprocess boundary with bounded execution and redacted diagnostics."""
 
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from deltx.common.exceptions import DeltxError
@@ -11,6 +11,7 @@ def run_process(
     args: Sequence[str],
     *,
     cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
     timeout: float = 120,
     secrets: Sequence[str] = (),
     error_type: type[DeltxError] = DeltxError,
@@ -22,6 +23,7 @@ def run_process(
         result = subprocess.run(
             list(args),  # noqa: S603
             cwd=cwd,
+            env=env,
             timeout=timeout,
             capture_output=True,
             check=True,

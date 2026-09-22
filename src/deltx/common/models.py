@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CommitDataVector(BaseModel):
-    """The canonical 15-D vector representing a commit in the ML dataset."""
+    """The 15 numeric ML features; CSV repository/commit identifiers are separate."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 

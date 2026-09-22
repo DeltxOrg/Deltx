@@ -10,7 +10,7 @@ from deltx.common.settings import PrefixedSettings
 
 
 class SonarConfig(PrefixedSettings):
-    """Local Sonar connection and reproducible Docker image selections."""
+    """One local server URL, shared by the API, Compose and scanner."""
 
     model_config = SettingsConfigDict(
         env_prefix="SONAR_",
@@ -20,17 +20,13 @@ class SonarConfig(PrefixedSettings):
         allow_inf_nan=False,
         hide_input_in_errors=True,
     )
-    # Avoid the common local PHP-FPM development port while keeping SonarQube
-    # itself on its standard container port.
-    host_url: str = "http://localhost:19000"
+    host_url: str
     token: SecretStr = Field(default_factory=lambda: SecretStr(""))
-    scanner_image: str = "sonarsource/sonar-scanner-cli:5.0.1"
-    expected_version: str = "9.9.8"
+    scanner_image: str = "sonarsource/sonar-scanner-cli:latest"
+    expected_version: str | None = None
     compose_file: Path = (
         Path(__file__).resolve().parents[4] / "docker/sonarqube/compose.yaml"
     )
-    network: str = "deltx-sonarqube"
-    scanner_host_url: str | None = None
     request_timeout: float = Field(default=30, gt=0)
     startup_timeout: float = Field(default=300, gt=0)
     compute_timeout: float = Field(default=600, gt=0)
@@ -56,22 +52,8 @@ class SonarConfig(PrefixedSettings):
             )
         image_name = self.scanner_image.rsplit("/", 1)[-1]
         tag = image_name.rsplit(":", 1)[-1] if ":" in image_name else ""
-        if not tag or tag == "latest" or "@" in image_name:
-            raise ValueError("SonarScanner image must have an explicit version tag")
-        if self.scanner_host_url:
-            scanner = urlsplit(self.scanner_host_url)
-            _ = scanner.port
-            if (
-                scanner.scheme not in {"http", "https"}
-                or not scanner.hostname
-                or scanner.username
-                or scanner.password
-                or scanner.query
-                or scanner.fragment
-            ):
-                raise ValueError(
-                    "SONAR_SCANNER_HOST_URL must be HTTP(S) without credentials"
-                )
-        if not self.expected_version.strip():
+        if not tag or any(c.isspace() for c in self.scanner_image):
+            raise ValueError("SonarScanner image must have a tag or digest")
+        if self.expected_version is not None and not self.expected_version.strip():
             raise ValueError("SONAR_EXPECTED_VERSION cannot be empty")
         return self

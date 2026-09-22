@@ -88,7 +88,7 @@ class ScoringConfig(FrozenConfig):
     Broader performance coverage requires reviewed rule overrides.
     """
 
-    version: str = "PYTHON_RESEARCH_BASELINE_V1"
+    version: str = "PYTHON_RESEARCH_BASELINE_V2"
     dimensions: Mapping[Dimension, DimensionConfig] = Field(
         default_factory=lambda: {d: DimensionConfig() for d in Dimension}
     )

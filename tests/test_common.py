@@ -89,10 +89,12 @@ def test_shared_dotenv_namespaces(
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
-        "SONAR_TOKEN=unit-test-token\nSCAN_DIR=/unused\nDELTX_DEVICE=cpu\n"
+        "SONAR_TOKEN=unit-test-token\nSONAR_HOST_URL=http://localhost:19876/sonar\n"
+        "SCAN_DIR=/unused\nDELTX_DEVICE=cpu\n"
     )
     assert DeltxConfig().device == "cpu"
     assert SonarConfig().token.get_secret_value() == "unit-test-token"
+    assert SonarConfig().host_url == "http://localhost:19876/sonar"
     (tmp_path / ".env").write_text("DELTX_TYPO=1\n")
     with pytest.raises(ValidationError):
         DeltxConfig()

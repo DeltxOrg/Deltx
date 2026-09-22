@@ -9,13 +9,14 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
+from pydantic import SecretStr
 
 from deltx.common.exceptions import (
     ConfigurationError,
     SonarClientError,
     SonarConnectionRefusedError,
 )
-from deltx.scoring.models import Severity
+from deltx.scoring.models import Dimension, Severity
 from deltx.scoring.sonarqube.client import (
     SonarQubeClient,
     _RejectRedirects,
@@ -26,16 +27,30 @@ from deltx.scoring.sonarqube.client import (
 from deltx.scoring.sonarqube.config import SonarConfig
 
 
+def config() -> SonarConfig:
+    return SonarConfig(
+        _env_file=None,
+        host_url="http://localhost:19876/sonar",
+        token=SecretStr("unit-test-token"),
+    )
+
+
 class FakeClient(SonarQubeClient):
     def __init__(self, responses: list[dict[str, object]]) -> None:
         super().__init__(
-            SonarConfig(page_size=1, compute_timeout=0.01, poll_interval=0.001)
+            config().model_copy(
+                update={"page_size": 1, "compute_timeout": 0.01, "poll_interval": 0.001}
+            )
         )
         self.responses = list(responses)
         self.calls: list[tuple[str, dict[str, str] | None]] = []
 
     def request(
-        self, endpoint: str, params: dict[str, str] | None = None
+        self,
+        endpoint: str,
+        params: dict[str, str] | None = None,
+        *,
+        authenticated: bool = True,
     ) -> dict[str, object]:
         self.calls.append((endpoint, params))
         return self.responses.pop(0)
@@ -64,8 +79,8 @@ def test_pagination_and_parsing() -> None:
     assert issues[0].file is not None and issues[0].file.as_posix() == "pkg/a.py"
     assert issues[0].severity == Severity.MAJOR
     assert client.calls[-1][1] == {
-        "componentKeys": "project",
-        "resolved": "false",
+        "components": "project",
+        "issueStatuses": "OPEN,CONFIRMED",
         "s": "FILE_LINE",
         "p": "2",
         "ps": "1",
@@ -111,7 +126,7 @@ def test_unsupported_severity_and_unknown_type() -> None:
     assert SonarQubeClient._issue(raw, "project").issue_type.value == "UNKNOWN"
     missing = raw_issue()
     del missing["severity"]
-    with pytest.raises(ConfigurationError, match="no legacy severity"):
+    with pytest.raises(ConfigurationError, match="no severity or impacts"):
         SonarQubeClient._issue(missing, "project")
     with pytest.raises(SonarClientError, match="different Sonar project"):
         SonarQubeClient._issue(raw_issue(), "other-project")
@@ -144,8 +159,11 @@ def test_http_success_and_errors() -> None:
     response.__enter__.return_value = io.BytesIO(json.dumps({"status": "UP"}).encode())
     with patch("deltx.scoring.sonarqube.client.build_opener") as opened:
         opened.return_value.open.return_value = response
-        assert SonarQubeClient(SonarConfig()).status()["status"] == "UP"
+        assert SonarQubeClient(config()).status()["status"] == "UP"
         assert opened.return_value.open.call_args.kwargs["timeout"] == 30
+        request = opened.return_value.open.call_args.args[0]
+        assert request.full_url == "http://localhost:19876/sonar/api/system/status?"
+        assert request.get_header("Authorization") is None
     errors = [
         URLError("offline"),
         TimeoutError("timeout"),
@@ -155,19 +173,19 @@ def test_http_success_and_errors() -> None:
         with patch("deltx.scoring.sonarqube.client.build_opener") as opened:
             opened.return_value.open.side_effect = error
             with pytest.raises(SonarClientError):
-                SonarQubeClient(SonarConfig()).status()
+                SonarQubeClient(config()).status()
     response.__enter__.return_value = io.BytesIO(b"not json")
     with patch("deltx.scoring.sonarqube.client.build_opener") as opened:
         opened.return_value.open.return_value = response
         with pytest.raises(SonarClientError, match="malformed"):
-            SonarQubeClient(SonarConfig()).status()
+            SonarQubeClient(config()).status()
 
 
 def test_refused_connection_and_redirect_are_distinct_errors() -> None:
     with patch("deltx.scoring.sonarqube.client.build_opener") as opened:
         opened.return_value.open.side_effect = URLError(ConnectionRefusedError())
         with pytest.raises(SonarConnectionRefusedError):
-            SonarQubeClient(SonarConfig()).status()
+            SonarQubeClient(config()).status()
     request = Request("http://localhost:19000/api/system/status")  # noqa: S310
     with pytest.raises(SonarClientError, match="redirect"):
         _RejectRedirects().redirect_request(
@@ -243,3 +261,87 @@ def test_empty_state_metrics_and_profile() -> None:
     ).measures("p")
     assert result.cognitive_complexity == result.duplicated_lines_density == 0
     assert FakeClient([{"profiles": []}]).profile("p", empty=True) == "[]"
+
+
+@pytest.mark.parametrize(
+    "level,expected",
+    [
+        ("INFO", Severity.INFO),
+        ("LOW", Severity.MINOR),
+        ("MEDIUM", Severity.MAJOR),
+        ("HIGH", Severity.CRITICAL),
+        ("BLOCKER", Severity.BLOCKER),
+    ],
+)
+def test_mqr_issues_without_legacy_fields(level: str, expected: Severity) -> None:
+    raw = raw_issue()
+    del raw["severity"], raw["type"]
+    raw["impacts"] = [{"softwareQuality": "RELIABILITY", "severity": level}]
+    issue = SonarQubeClient._issue(raw, "project")
+    assert issue.severity == expected
+    assert issue.impacts[0].dimension == Dimension.CORRECTNESS
+    assert issue.impacts[0].severity == expected
+
+
+def test_mqr_preserves_each_severity_and_counts_issue_once_at_maximum() -> None:
+    raw = raw_issue(severity="BLOCKER")
+    raw["impacts"] = [
+        {"softwareQuality": "SECURITY", "severity": "HIGH"},
+        {"softwareQuality": "MAINTAINABILITY", "severity": "LOW"},
+    ]
+    issue = SonarQubeClient._issue(raw, "project")
+    assert issue.severity == Severity.CRITICAL  # MQR wins over legacy severity.
+    assert [i.severity for i in issue.impacts] == [Severity.CRITICAL, Severity.MINOR]
+
+
+@pytest.mark.parametrize(
+    "impacts,error",
+    [
+        ([{"softwareQuality": "SECURITY", "severity": "EXTREME"}], ConfigurationError),
+        ([{"softwareQuality": "OTHER", "severity": "HIGH"}], ConfigurationError),
+        ([{"softwareQuality": "SECURITY", "severity": "HIGH"}] * 2, SonarClientError),
+        (None, SonarClientError),
+    ],
+)
+def test_bad_mqr_impacts_fail_instead_of_losing_evidence(
+    impacts: object, error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        SonarQubeClient._issue({**raw_issue(), "impacts": impacts}, "project")
+
+
+def test_mqr_debt_wins_over_legacy_metric() -> None:
+    values = {
+        "ncloc": "1",
+        "cognitive_complexity": "0",
+        "duplicated_lines_density": "0",
+        "sqale_index": "10",
+        "software_quality_maintainability_remediation_effort": "45",
+        "software_quality_maintainability_debt_ratio": "12.5",
+    }
+    client = FakeClient(
+        [
+            {
+                "component": {
+                    "measures": [
+                        {"metric": key, "value": value} for key, value in values.items()
+                    ]
+                }
+            }
+        ]
+    )
+    result = client.measures("project")
+    assert result.sqale_index == 45
+    assert result.sqale_debt_ratio == 12.5
+    assert "software_quality_maintainability_remediation_effort" in str(client.calls)
+
+
+def test_api_bearer_auth_uses_configured_context_and_port() -> None:
+    response = MagicMock()
+    response.__enter__.return_value = io.BytesIO(b'{"valid":true}')
+    with patch("deltx.scoring.sonarqube.client.build_opener") as opened:
+        opened.return_value.open.return_value = response
+        SonarQubeClient(config()).request("api/authentication/validate")
+        request = opened.return_value.open.call_args.args[0]
+        assert request.get_header("Authorization") == "Bearer unit-test-token"
+        assert request.full_url.startswith(config().host_url + "/api/")

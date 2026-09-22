@@ -214,7 +214,7 @@ def dataset(
     scoring_config: Path | None,
     device: str,
 ) -> None:
-    """Build a chronological 15-feature CSV from a local Python Git repository."""
+    """Build a CSV with repository/commit identifiers and 15 numeric features."""
     from pydantic import ValidationError
 
     from deltx.common.exceptions import ConfigurationError
@@ -256,6 +256,46 @@ def dataset(
 @click.group()
 def cli() -> None:
     """Deltx research extraction and dataset commands."""
+
+
+@cli.group()
+def sonar() -> None:
+    """Manage local SonarQube using SONAR_HOST_URL from .env."""
+
+
+@sonar.command("up")
+def sonar_up() -> None:
+    """Start the latest server and wait until it is ready."""
+    from pydantic import ValidationError
+
+    from deltx.scoring.sonarqube.client import SonarQubeClient
+    from deltx.scoring.sonarqube.config import SonarConfig
+    from deltx.scoring.sonarqube.docker import DockerSonarQubeManager
+
+    try:
+        config = SonarConfig()
+        manager = DockerSonarQubeManager(config, SonarQubeClient(config))
+        version = manager.ensure_ready()
+    except (DeltxError, ValidationError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"SonarQube {version} ready at {config.host_url}")
+
+
+@sonar.command("down")
+def sonar_down() -> None:
+    """Stop the managed stack, preserving its data volumes."""
+    from pydantic import ValidationError
+
+    from deltx.scoring.sonarqube.client import SonarQubeClient
+    from deltx.scoring.sonarqube.config import SonarConfig
+    from deltx.scoring.sonarqube.docker import DockerSonarQubeManager
+
+    try:
+        config = SonarConfig()
+        DockerSonarQubeManager(config, SonarQubeClient(config)).compose("down")
+    except (DeltxError, ValidationError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("SonarQube stopped; data volumes retained")
 
 
 cli.add_command(main, "extract")

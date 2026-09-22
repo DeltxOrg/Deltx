@@ -65,19 +65,31 @@ print(result.file_results[0].distribution)  # the retained per-file distribution
 ### Build a Python history dataset
 
 ```bash
-docker compose -f docker/sonarqube/compose.yaml up -d sonarqube
-# Complete SonarQube setup at http://localhost:19000 and set SONAR_TOKEN.
+# For a new checkout: copy .env.example to .env and set SONAR_HOST_URL.
+# Keep your existing .env if you already have one.
+poetry run deltx sonar up
+# Open SONAR_HOST_URL, complete setup, and set a User token in .env as SONAR_TOKEN.
 poetry run deltx dataset /path/to/repository --output dataset.csv
 poetry run deltx dataset /path/to/repository --output all.csv --no-filter
+# Stop the server while retaining its data:
+poetry run deltx sonar down
 ```
 
-The model CSV contains exactly 15 ordered numeric features; provenance is in
+The dataset CSV starts with `repository,commit_hash`, followed by 15 ordered
+numeric features. The identifiers group repository histories and trace exact
+commits; exclude them from transformer tensors. Detailed provenance is in
 `dataset.metadata.csv`. Default selection skips semantically unchanged Python
 checkpoints using AST comparison. `--no-filter` and `-no-filter` process every
 checkpoint while keeping analysis Python-only. The user's working tree is untouched.
 
-The pinned SonarQube/Scanner workflow waits for each analysis before collecting
-current issues and metrics. Deltx then applies contextual issue weighting and
+The stack uses `sonarqube:latest` and `sonarsource/sonar-scanner-cli:latest`.
+`SONAR_HOST_URL` in `.env` supplies the API URL, Docker port and scanner route.
+The latest stack has separate volumes from the old 9.9 stack; create a new token
+on the new server. Existing CSVs and old server volumes are retained.
+
+The SonarQube/Scanner workflow waits for each analysis before collecting
+current issues and metrics, including MQR software-quality impacts.
+Deltx then applies contextual issue weighting and
 SQUALE-inspired nonlinear aggregation to four 0–100 quality scores. Parameters
 are a reproducible research baseline and still require calibration.
 

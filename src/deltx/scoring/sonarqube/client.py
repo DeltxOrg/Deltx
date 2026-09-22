@@ -1,6 +1,5 @@
-"""Validated, paginated SonarQube 9.9 Web API client."""
+"""Validated, paginated SonarQube Community Build Web API client."""
 
-import base64
 import json
 import time
 from http.client import HTTPException, HTTPMessage
@@ -17,8 +16,32 @@ from deltx.common.exceptions import (
     SonarClientError,
     SonarConnectionRefusedError,
 )
-from deltx.scoring.models import IssueType, Severity, SonarIssue, SonarMeasures
+from deltx.scoring.models import (
+    Dimension,
+    IssueImpact,
+    IssueType,
+    Severity,
+    SonarIssue,
+    SonarMeasures,
+)
 from deltx.scoring.sonarqube.config import SonarConfig
+
+IMPACT_SEVERITIES = {
+    "INFO": Severity.INFO,
+    "LOW": Severity.MINOR,
+    "MEDIUM": Severity.MAJOR,
+    "HIGH": Severity.CRITICAL,
+    "BLOCKER": Severity.BLOCKER,
+}
+SOFTWARE_QUALITIES = {
+    "MAINTAINABILITY": Dimension.MAINTAINABILITY,
+    "RELIABILITY": Dimension.CORRECTNESS,
+    "SECURITY": Dimension.SECURITY,
+}
+MQR_METRICS = {
+    "software_quality_maintainability_remediation_effort": "sqale_index",
+    "software_quality_maintainability_debt_ratio": "sqale_debt_ratio",
+}
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -64,15 +87,18 @@ class SonarQubeClient:
         self.config = config
 
     def request(
-        self, endpoint: str, params: dict[str, str] | None = None
+        self,
+        endpoint: str,
+        params: dict[str, str] | None = None,
+        *,
+        authenticated: bool = True,
     ) -> dict[str, object]:
         """GET a local API endpoint, with timeout and actionable errors."""
         url = f"{self.config.host_url.rstrip('/')}/{endpoint}?{urlencode(params or {})}"
         token = self.config.token.get_secret_value()
         headers = {}
-        if token:
-            encoded = base64.b64encode(f"{token}:".encode()).decode()
-            headers["Authorization"] = f"Basic {encoded}"
+        if token and authenticated:
+            headers["Authorization"] = f"Bearer {token}"
         request = Request(url, headers=headers)  # noqa: S310 - validated local HTTP(S)
         try:
             # API redirects are unexpected. Reject them rather than forwarding
@@ -100,11 +126,15 @@ class SonarQubeClient:
 
     def status(self) -> dict[str, object]:
         """Read status/version without requiring authentication."""
-        return self.request("api/system/status")
+        return self.request("api/system/status", authenticated=False)
 
     def issues(self, project_key: str) -> tuple[SonarIssue, ...]:
         """Retrieve unresolved issues, partitioning by file above Sonar's 10k cap."""
-        params = {"componentKeys": project_key, "resolved": "false", "s": "FILE_LINE"}
+        params = {
+            "components": project_key,
+            "issueStatuses": "OPEN,CONFIRMED",
+            "s": "FILE_LINE",
+        }
         first = self.request("api/issues/search", {**params, "p": "1", "ps": "1"})
         total = self._total(first)
         if total <= 10000:
@@ -120,7 +150,7 @@ class SonarQubeClient:
                 key = as_text(as_object(component).get("key"))
                 raw.extend(
                     self._pages(
-                        "api/issues/search", {**params, "componentKeys": key}, "issues"
+                        "api/issues/search", {**params, "components": key}, "issues"
                     )
                 )
             # Project-level issues or concurrent analysis must not silently disappear.
@@ -171,20 +201,33 @@ class SonarQubeClient:
 
     @staticmethod
     def _issue(raw: dict[str, object], project_key: str) -> SonarIssue:
-        if "severity" not in raw:
-            raise ConfigurationError(
-                "Sonar issue has no legacy severity; configure a profile/version "
-                "exposing INFO/MINOR/MAJOR/CRITICAL/BLOCKER"
-            )
-        severity_text = as_text(raw.get("severity"))
-        try:
-            severity = Severity(severity_text)
-        except ValueError as exc:
-            raise ConfigurationError(
-                f"unsupported Sonar severity {severity_text!r}; "
-                "require INFO/MINOR/MAJOR/CRITICAL/BLOCKER"
-            ) from exc
-        type_text = as_text(raw.get("type"))
+        impacts: list[IssueImpact] = []
+        dimensions: set[Dimension] = set()
+        for value in as_list(raw.get("impacts", [])):
+            impact = as_object(value)
+            quality = as_text(impact.get("softwareQuality"))
+            level = as_text(impact.get("severity"))
+            if quality not in SOFTWARE_QUALITIES or level not in IMPACT_SEVERITIES:
+                raise ConfigurationError(f"unsupported Sonar impact {quality}/{level}")
+            dimension = SOFTWARE_QUALITIES[quality]
+            if dimension in dimensions:
+                raise SonarClientError("duplicate Sonar software quality impact")
+            dimensions.add(dimension)
+            impacts.append(IssueImpact(dimension, IMPACT_SEVERITIES[level]))
+        if impacts:
+            # Count an issue once in CSV densities, at its greatest impact.
+            severity = max((i.severity for i in impacts), key=list(Severity).index)
+        else:
+            if "severity" not in raw:
+                raise ConfigurationError("Sonar issue has no severity or impacts")
+            severity_text = as_text(raw.get("severity"))
+            try:
+                severity = Severity(severity_text)
+            except ValueError as exc:
+                raise ConfigurationError(
+                    f"unsupported Sonar severity {severity_text!r}"
+                ) from exc
+        type_text = as_text(raw.get("type", "UNKNOWN"))
         issue_type = (
             IssueType(type_text) if type_text in IssueType else IssueType.UNKNOWN
         )
@@ -201,11 +244,12 @@ class SonarQubeClient:
             severity,
             issue_type,
             file,
+            tuple(impacts),
         )
 
     def measures(self, project_key: str, *, empty: bool = False) -> SonarMeasures:
         """Parse current measures; missing required metrics are errors for code."""
-        names = tuple(SonarMeasures.model_fields)
+        names = (*SonarMeasures.model_fields, *MQR_METRICS)
         payload = self.request(
             "api/measures/component",
             {"component": project_key, "metricKeys": ",".join(names)},
@@ -216,6 +260,11 @@ class SonarQubeClient:
         }
         if len(values) != len(raw):
             raise SonarClientError("malformed Sonar response: duplicate metric values")
+        # Align technical debt with the preferred MQR issue classification.
+        # Standard Experience measures remain a fallback when MQR is absent.
+        for modern, domain in MQR_METRICS.items():
+            if modern in values:
+                values[domain] = values.pop(modern)
         if empty or values.get("ncloc") in ("0", 0, 0.0):
             for name in ("ncloc", "cognitive_complexity", "duplicated_lines_density"):
                 values.setdefault(name, 0)
