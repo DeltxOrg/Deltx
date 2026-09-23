@@ -25,7 +25,7 @@ def _row(**overrides: object) -> CommitRow:
         "ai_confidence_pct": 42.0,
     }
     base.update(overrides)
-    return CommitRow(**base)  # type: ignore[arg-type]
+    return CommitRow.model_validate(base)
 
 
 def test_valid_row_round_trips() -> None:

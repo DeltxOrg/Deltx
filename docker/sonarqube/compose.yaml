@@ -1,0 +1,19 @@
+# Separate storage preserves the previous 9.9 database and plugins.
+name: deltx-sonarqube-current
+services:
+  sonarqube:
+    image: sonarqube:latest
+    pull_policy: always
+    ports:
+      # `deltx sonar up` derives this binding from SONAR_HOST_URL in .env.
+      - "${DELTX_SONAR_BIND:?Use poetry run deltx sonar up}:9000"
+    environment:
+      SONAR_WEB_CONTEXT: "${DELTX_SONAR_CONTEXT:-}"
+    volumes:
+      - sonar-data:/opt/sonarqube/data
+      - sonar-extensions:/opt/sonarqube/extensions
+      - sonar-logs:/opt/sonarqube/logs
+volumes:
+  sonar-data:
+  sonar-extensions:
+  sonar-logs:

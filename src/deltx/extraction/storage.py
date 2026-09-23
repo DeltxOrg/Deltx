@@ -50,9 +50,7 @@ def rows_to_frame(rows: list[CommitRow]) -> pd.DataFrame:
     )
     if not frame.empty:
         frame = frame.astype(_COLUMN_DTYPES)
-        frame["commit_timestamp"] = pd.to_datetime(
-            frame["commit_timestamp"], utc=True
-        )
+        frame["commit_timestamp"] = pd.to_datetime(frame["commit_timestamp"], utc=True)
         frame = frame.sort_values("commit_index").reset_index(drop=True)
     return frame
 
@@ -110,8 +108,7 @@ def load_resume(resume_path: Path) -> tuple[list[CommitRow], set[str]]:
         raise ExtractionError(msg)
 
     rows = [
-        CommitRow.model_validate(record)
-        for record in frame.to_dict(orient="records")
+        CommitRow.model_validate(record) for record in frame.to_dict(orient="records")
     ]
     processed = {row.commit_hash for row in rows}
     logger.info(

@@ -38,8 +38,8 @@ class TestDroidLabel:
     def test_index_order_is_pinned(self) -> None:
         """Verified against DroidCollection ground truth; nothing in the
         checkpoint pins this, so a regression here silently inverts scores."""
-        assert DroidLabel.HUMAN_GENERATED == 0
-        assert DroidLabel.MACHINE_GENERATED == 1
+        assert DroidLabel.HUMAN_GENERATED.value == 0
+        assert DroidLabel.MACHINE_GENERATED.value == 1
         assert len(DroidLabel) == 2
 
 
@@ -70,7 +70,7 @@ class TestClassDistribution:
     def test_is_frozen(self) -> None:
         dist = make_distribution(0.5)
         with pytest.raises(ValidationError):
-            dist.human_generated = 0.9
+            dist.human_generated = 0.9  # type: ignore[misc]  # test frozen mutation
 
 
 class TestFileAnalysisResult:

@@ -142,6 +142,28 @@ def test_read_file_returns_none_for_binary(repo_builder: Builder) -> None:
     assert GitRepository(b.root).read_file(sha, PurePosixPath("a.py")) is None
 
 
+def test_read_file_honors_python_encoding_cookie(repo_builder: Builder) -> None:
+    repo = repo_builder("r")
+    source = "# coding: cp1252\nprice = '€'\n"
+    repo.write_bytes("a.py", source.encode("cp1252"))
+    sha = repo.commit("legacy encoding")
+    assert GitRepository(repo.root).read_file(sha, PurePosixPath("a.py")) == source
+
+
+def test_subject_delimiters_do_not_corrupt_commit_metadata(
+    repo_builder: Builder,
+) -> None:
+    repo = repo_builder("r")
+    subject = "subject\x1fwith\u2028separators"
+    repo.write("a.py", "x=1\n")
+    root = repo.commit(subject)
+    repo.write("a.py", "x=2\n")
+    repo.commit("next")
+    first, second = GitRepository(repo.root).iter_commits("HEAD")
+    assert first.message == subject and first.parents == ()
+    assert second.first_parent == root and second.message == "next"
+
+
 def test_resolve_branch_explicit_and_missing(repo_builder: Builder) -> None:
     b = repo_builder("r")
     b.write("a.py", "x = 1\n")

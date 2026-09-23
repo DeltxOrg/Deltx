@@ -149,9 +149,9 @@ from deltx.detection.inference import AIDetectionInference
 detector = AIDetectionInference.from_config(DeltxConfig())
 
 result = detector.analyze_file(source, Path("module.py"))
-result.ai_confidence      # P(AI) in [0, 1]
-result.distribution       # ClassDistribution over the two labels
-result.is_scored          # False → excluded from commit aggregation
+result.ai_confidence  # P(AI) in [0, 1]
+result.distribution  # ClassDistribution over the two labels
+result.is_scored  # False → excluded from commit aggregation
 
 commit = detector.analyze_commit(
     files={Path("src/app.py"): source},

@@ -35,6 +35,7 @@ poetry.lock
 # Environment
 .env
 .env.*
+!.env.example
 
 # Data — ignore all downloaded/generated artifacts, keep the folder structure.
 data/raw/*

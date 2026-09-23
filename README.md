@@ -8,7 +8,7 @@ Each commit is encoded as a 15-dimensional vector. Index `[4]` of that vector is
 
 | Stage | Module | Status |
 |-------|--------|--------|
-| 1. Data collection | `deltx.extraction` | planned |
+| 1. Data collection | `deltx.extraction` | **implemented** |
 | 2. AI authorship detection | `deltx.detection` | **implemented** |
 | 3. Squale quality aggregation | `deltx.scoring` | **implemented** |
 | 4. PatchTST forecasting | `deltx.prediction` | planned |
@@ -58,51 +58,45 @@ from deltx.detection.inference import AIDetectionInference
 detector = AIDetectionInference.from_config(DeltxConfig())
 result = detector.analyze_commit(files, commit_hash, timestamp)
 
-print(result.ai_confidence_pct)          # 0–100, LOC-weighted across the commit
+print(result.ai_confidence_pct)  # 0–100, LOC-weighted across the commit
 print(result.file_results[0].distribution)  # the retained per-file distribution
 ```
 
-### Score a commit
-
-To score a commit, you need a running SonarQube instance. You can start the local SonarQube server and run a scan on a repository (e.g., Pyevolve) using Docker Compose:
+### Build a Python history dataset
 
 ```bash
-# 1. Start the SonarQube server (runs on localhost:9000)
-docker compose up -d sonarqube
-
-# 2. Checkout the specific branch you want to score in your target repository
-cd /path/to/repo
-git checkout <branch-name>
-
-# 3. Run the SonarScanner on your repository
-# (Run this from the Deltx repository directory)
-docker compose run --rm sonar-scanner -Dsonar.projectKey=my-project
+# For a new checkout: copy .env.example to .env and set SONAR_HOST_URL.
+# Keep your existing .env if you already have one.
+poetry run deltx sonar up
+# Open SONAR_HOST_URL, complete setup, and set a User token in .env as SONAR_TOKEN.
+poetry run deltx dataset /path/to/repository --output dataset.csv
+poetry run deltx dataset /path/to/repository --output all.csv --no-filter
+# Stop the server while retaining its data:
+poetry run deltx sonar down
 ```
 
-Then, you can use the scoring script to pull the issues and run the Deltx Squale aggregation:
+The dataset CSV starts with `repository,commit_hash`, followed by 15 ordered
+numeric features. `repository` contains the directory name only (e.g. `Pyevolve`).
+The identifiers group repository histories and trace exact
+commits; exclude them from transformer tensors. Detailed provenance is in
+`dataset.metadata.csv`. Default selection skips semantically unchanged Python
+checkpoints using AST comparison. `--no-filter` and `-no-filter` process every
+checkpoint while keeping analysis Python-only. The user's working tree is untouched.
 
-```bash
-# 4. Calculate and print the 4 ISO/IEC 25010 scores
-./.venv/bin/python scripts/score_local.py \
-    --project-key my-project \
-    --commit <branch-name>
-```
+The stack uses `sonarqube:latest` and `sonarsource/sonar-scanner-cli:latest`.
+`SONAR_HOST_URL` in `.env` supplies the API URL, Docker port and scanner route.
+The latest stack has separate volumes from the old 9.9 stack; create a new token
+on the new server. Existing CSVs and old server volumes are retained.
 
-Or from Python:
+The SonarQube/Scanner workflow waits for each analysis before collecting
+current issues and metrics, including MQR software-quality impacts.
+Deltx then applies contextual issue weighting and
+SQUALE-inspired nonlinear aggregation to four 0–100 quality scores. Parameters
+are a reproducible research baseline and still require calibration.
 
-```python
-from deltx.scoring.pipeline import score_commit
-from deltx.scoring.models import Hyperparams
-
-vector = score_commit(
-    component_key="my-project",
-    source_dir=Path("./checkout"),
-    repo_path=Path("./checkout"),
-    commit="abc123",
-    issues=issues,  # list[SonarIssue]
-)
-print(vector.to_dict())  # four scores in [0, 100]
-```
+See [the dataset and scoring guide](docs/scoring/README.md) for the architecture,
+exact formulas, configuration, Docker setup, schema and limitations. Existing
+`deltx-extract` AI-only Parquet extraction remains available.
 
 ### Run the tests
 
