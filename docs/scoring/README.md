@@ -4,6 +4,31 @@
 meaningful Python checkpoint. `--no-filter` and `-no-filter` process every
 reachable checkpoint. Both modes analyze Python only, including Python tests.
 
+## Default checkpoint filter
+
+By default, Deltx omits commits that do not make a meaningful change to a tracked,
+regular Python source file. In practice, this skips commits that:
+
+- change only non-Python files, such as documentation, images, configuration,
+  lockfiles, or other assets;
+- add, remove, or edit only comments, whitespace, formatting, or line positions
+  in Python files;
+- change only a recognised module, class, function, or async-function docstring;
+- perform a pure Python-file rename without changing its normalized contents; or
+- affect only a Python symlink, submodule entry, or other non-regular Git tree
+  entry.
+
+The filter compares normalized Python syntax rather than commit messages, file
+size, or number of changed lines. A one-line semantic edit, an added or deleted
+nonempty Python file, and a rename with a code change are retained. Merge commits
+are also retained when their first-parent diff contains a meaningful Python change.
+
+Use `--no-filter` (or `-no-filter`) to emit every reachable commit, including
+documentation-only and formatting-only commits. Those rows still scan the Python
+snapshot, but have zero Python change counts and may have no AI evidence. This is
+useful for a complete history; the default is usually better for code-change
+modelling.
+
 The existing `deltx-extract` command still produces the original AI-only
 Parquet dataset. The `deltx extract` alias invokes that same implementation.
 `python -m deltx.extraction.cli dataset ...` works before reinstalling entry
