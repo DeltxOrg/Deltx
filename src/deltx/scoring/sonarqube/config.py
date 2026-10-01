@@ -23,6 +23,7 @@ class SonarConfig(PrefixedSettings):
     host_url: str
     token: SecretStr = Field(default_factory=lambda: SecretStr(""))
     scanner_image: str = "sonarsource/sonar-scanner-cli:latest"
+    scanner_pull: bool = True
     expected_version: str | None = None
     compose_file: Path = (
         Path(__file__).resolve().parents[4] / "docker/sonarqube/compose.yaml"

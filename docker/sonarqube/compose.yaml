@@ -9,6 +9,11 @@ services:
       - "${DELTX_SONAR_BIND:?Use poetry run deltx sonar up}:9000"
     environment:
       SONAR_WEB_CONTEXT: "${DELTX_SONAR_CONTEXT:-}"
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc: 8192
     volumes:
       - sonar-data:/opt/sonarqube/data
       - sonar-extensions:/opt/sonarqube/extensions

@@ -98,6 +98,9 @@ See [the dataset and scoring guide](docs/scoring/README.md) for the architecture
 exact formulas, configuration, Docker setup, schema and limitations. Existing
 `deltx-extract` AI-only Parquet extraction remains available.
 
+For an unattended run on Oracle Cloud Infrastructure Always Free, see the
+[OCI Ampere A1 deployment guide](docs/deployment/oci-always-free.md).
+
 ### Run the tests
 
 ```bash

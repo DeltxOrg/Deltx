@@ -46,11 +46,12 @@ class DockerSonarScanner:
         """Refresh the image once, then use its immutable ID for the whole run."""
         if self.image_id:
             return
-        run_process(
-            ["docker", "pull", self.config.scanner_image],
-            timeout=self.config.scan_timeout,
-            error_type=SonarClientError,
-        )
+        if self.config.scanner_pull:
+            run_process(
+                ["docker", "pull", self.config.scanner_image],
+                timeout=self.config.scan_timeout,
+                error_type=SonarClientError,
+            )
         image_id = (
             run_process(
                 [
