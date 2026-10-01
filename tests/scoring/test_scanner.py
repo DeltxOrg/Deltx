@@ -332,6 +332,37 @@ def test_latest_scanner_is_resolved_once_per_run(tmp_path: Path) -> None:
     assert settings.scanner_image not in scanner.command(tmp_path, tmp_path, "p", "sha")
 
 
+def test_local_scanner_is_inspected_without_pull(tmp_path: Path) -> None:
+    settings = config().model_copy(
+        update={
+            "scanner_image": "deltx-sonar-scanner-arm64:8.1.0.6389",
+            "scanner_pull": False,
+        }
+    )
+    client = SonarQubeClient(settings)
+    scanner = DockerSonarScanner(
+        settings, client, DockerSonarQubeManager(settings, client)
+    )
+    image_id = "sha256:" + "b" * 64
+    with patch(
+        "deltx.scoring.sonarqube.scanner.run_process", return_value=image_id.encode()
+    ) as run:
+        scanner.prepare()
+        scanner.prepare()
+    run.assert_called_once_with(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            settings.scanner_image,
+        ],
+        error_type=SonarClientError,
+    )
+    assert image_id in scanner.command(tmp_path, tmp_path, "p", "sha")
+
+
 def test_optional_version_constraint_and_pending_migration() -> None:
     settings = config().model_copy(update={"expected_version": "26.8"})
     manager = DockerSonarQubeManager(settings, SonarQubeClient(settings))

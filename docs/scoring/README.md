@@ -75,7 +75,10 @@ loopback-only servers). Docker Desktop substitutes `host.docker.internal` for
 the loopback hostname while preserving the configured scheme, port and path.
 `SONAR_COMPOSE_FILE` locates the Compose file for installations outside this
 checkout. An optional `SONAR_EXPECTED_VERSION` constrains the server version for
-repeat experiments. `SONAR_SCANNER_IMAGE` can select a registry image digest.
+repeat experiments. `SONAR_SCANNER_IMAGE` can select a registry image digest;
+`SONAR_SCANNER_PULL=false` uses an image built locally instead of pulling it.
+See the [OCI ARM64 guide](../deployment/oci-always-free.md) for a native scanner
+image and end-to-end VM setup.
 Request/startup/scan/Compute Engine timeouts and polling interval are typed settings
 in `scoring/sonarqube/config.py`. Community Build 25+ and Server 2025+ version
 formats are accepted; the live integration test targets the current `latest`
